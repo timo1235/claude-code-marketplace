@@ -4,9 +4,10 @@
  * Codex CLI wrapper for plan and code reviews.
  *
  * Usage:
- *   node codex-review.js --type plan|step-review|final-review --project-dir /path [--step-id N]
+ *   node codex-review.js --type preflight|plan|step-review|final-review --project-dir /path [--step-id N]
  *
  * Types:
+ *   preflight     - Verify Codex CLI is available and working → exits 0 with JSON { ok: true }
  *   plan          - Review the implementation plan → .task/plan-review.json
  *   step-review   - Review a single step (requires --step-id) → .task/step-N-review.json
  *   final-review  - Review all changes across all steps → .task/code-review.json
@@ -373,10 +374,33 @@ function buildSkipResult(type, stepId) {
 async function main() {
   const { type, projectDir, stepId } = parseArgs();
 
-  const validTypes = ['plan', 'step-review', 'final-review'];
+  const validTypes = ['preflight', 'plan', 'step-review', 'final-review'];
   if (!type || !validTypes.includes(type)) {
-    console.error('Usage: codex-review.js --type plan|step-review|final-review --project-dir /path [--step-id N]');
+    console.error('Usage: codex-review.js --type preflight|plan|step-review|final-review --project-dir /path [--step-id N]');
     process.exit(1);
+  }
+
+  // Find Codex early — needed for all types
+  const codexPath = findCodex();
+
+  // Preflight check: verify Codex is available and responds
+  if (type === 'preflight') {
+    if (!codexPath) {
+      console.error('[codex-review] Preflight FAILED: Codex CLI not found.');
+      console.log(JSON.stringify({ ok: false, error: 'Codex CLI not found. Install it or add it to PATH.' }));
+      process.exit(1);
+    }
+
+    try {
+      execSync(`${codexPath} --help`, { stdio: 'pipe', timeout: 10000 });
+      console.error(`[codex-review] Preflight OK: Codex found at ${codexPath}`);
+      console.log(JSON.stringify({ ok: true, codex_path: codexPath }));
+      process.exit(0);
+    } catch (err) {
+      console.error(`[codex-review] Preflight FAILED: Codex found at ${codexPath} but not responding.`);
+      console.log(JSON.stringify({ ok: false, error: `Codex at ${codexPath} not responding: ${err.message}` }));
+      process.exit(1);
+    }
   }
 
   if (type === 'step-review' && !stepId) {
@@ -388,8 +412,7 @@ async function main() {
   const taskDir = path.join(dir, '.task');
   const outputPath = getOutputPath(taskDir, type, stepId);
 
-  // Find Codex
-  const codexPath = findCodex();
+  // Check Codex availability
   if (!codexPath) {
     console.error('Codex CLI not found. Install it or add it to PATH.');
     fs.writeFileSync(outputPath, JSON.stringify(buildSkipResult(type, stepId), null, 2));

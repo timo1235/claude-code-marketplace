@@ -136,12 +136,19 @@ Cache this path for all subsequent Codex calls in the session.
 When the user invokes this skill:
 
 1. **Ask for the task description** if not already provided
-2. **Initialize the pipeline:**
+2. **Codex Preflight Check** — Run BEFORE anything else:
+   ```
+   Bash("node <SCRIPT_PATH>/codex-review.js --type preflight")
+   ```
+   - If stdout contains `"ok": true` → continue
+   - If it fails (exit code 1 or `"ok": false`) → **ABORT the pipeline immediately**. Tell the user: "Codex CLI is not available. The pipeline requires Codex for code reviews. Please install Codex and try again."
+   - Do NOT proceed to any phase if preflight fails.
+3. **Initialize the pipeline:**
    - Copy `.task.template/state.json` to project `.task/state.json` (create `.task/` if needed)
    - Create the task chain (see below)
-3. **Run Phase 1** immediately
-4. **After Phase 1 completes** → immediately run Phase 2 (Codex plan review)
-5. **Continue automatically** through Phase 2 → 3 → 4 (first user stop point)
+4. **Run Phase 1** immediately
+5. **After Phase 1 completes** → immediately run Phase 2 (Codex plan review)
+6. **Continue automatically** through Phase 2 → 3 → 4 (first user stop point)
 
 ## Task Chain Creation
 
@@ -300,7 +307,7 @@ Phase values during step execution: `implementing_step_N`, `reviewing_step_N`, `
 
 ### Error Handling
 - If any agent fails → report the error, ask user how to proceed
-- If Codex is unavailable → skip Codex steps, warn user
+- If Codex is unavailable → **ABORT the pipeline** (Codex is required, verified by preflight check)
 - If Playwright is unavailable → skip UI verification, warn user
 
 ### Agent Communication
