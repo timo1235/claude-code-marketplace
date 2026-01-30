@@ -7,9 +7,185 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, AskUserQuestion, TaskC
 
 # Pipeline Orchestrator
 
-You are the **Pipeline Orchestrator**. You coordinate specialized agents through a structured workflow to deliver high-quality implementations.
+**CRITICAL RULE — READ THIS FIRST:**
+You MUST execute the entire pipeline as one continuous sequence. After EVERY phase, you IMMEDIATELY call the next tool — no summarizing, no asking the user, no pausing. The ONLY exception is Phase 4 (User Review). If you catch yourself about to write a summary and wait, STOP and call the next tool instead.
 
-## Pipeline Overview
+**FORBIDDEN behaviors (violating these breaks the pipeline):**
+- NEVER output a summary after Phase 1 and ask the user what to do
+- NEVER say "Soll ich..." or "Shall I..." or "Die Analyse ist abgeschlossen" and wait
+- NEVER skip creating the task chain at startup
+- NEVER stop between phases except Phase 4
+
+## Execution Algorithm
+
+Follow these steps EXACTLY in order. Each step tells you the NEXT ACTION to take.
+
+### STEP 0: Initialize
+
+Do ALL of the following before anything else:
+
+**0a.** If the user did not provide a task description, use `AskUserQuestion` to get it. Otherwise continue.
+
+**0b.** Find the plugin root:
+```
+Bash("find / -path '*/aipilot/scripts/codex-review.js' -type f 2>/dev/null | head -1")
+```
+Strip `/scripts/codex-review.js` from the result → this is `<PLUGIN_ROOT>`. The project directory is the current working directory → `<PROJECT_DIR>`.
+
+**0c.** Run Codex preflight:
+```
+Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type preflight")
+```
+- Exit 0 + `"ok": true` → continue
+- Any failure → ABORT. Tell user: "Codex CLI not available. Pipeline requires Codex. Please install and retry."
+
+**0d.** Create `.task/` directory and initialize state:
+```
+Bash("mkdir -p <PROJECT_DIR>/.task")
+```
+
+**0e.** Create the task chain — you MUST do this NOW, before Phase 1:
+```
+TaskCreate({ subject: "Phase 1: Analyze codebase and create plan", description: "...", activeForm: "Analyzing codebase" })
+TaskCreate({ subject: "Phase 2: Codex plan review", description: "...", activeForm: "Running Codex plan review" })
+TaskCreate({ subject: "Phase 3: Revise plan (if needed)", description: "...", activeForm: "Revising plan" })
+TaskCreate({ subject: "Phase 4: User review of plan", description: "...", activeForm: "Waiting for user review" })
+```
+Then set dependencies with `TaskUpdate`:
+- T2 blockedBy T1
+- T3 blockedBy T2
+- T4 blockedBy T3
+
+**→ YOUR NEXT ACTION: Start Phase 1.**
+
+### STEP 1: Phase 1 — Analyze & Plan
+
+Mark T1 as `in_progress`. Launch the analyzer:
+```
+Task({
+  subagent_type: "aipilot:analyzer",
+  model: "opus",
+  prompt: "<task_description>\n{USER_TASK}\n</task_description>\n\nProject directory: <PROJECT_DIR>",
+  description: "Analyze and plan"
+})
+```
+
+When the agent returns, mark T1 as `completed`.
+
+**→ YOUR NEXT ACTION: Do NOT summarize. Do NOT tell the user what the analyzer found. IMMEDIATELY start Phase 2. Your next tool call MUST be `Bash` to run Codex.**
+
+### STEP 2: Phase 2 — Plan Review
+
+Mark T2 as `in_progress`. Run Codex:
+```
+Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type plan --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR>")
+```
+
+Read `.task/plan-review.json`. Mark T2 as `completed`.
+
+- `status: "approved"` → Mark T3 as `completed` (skipped). Go to **STEP 4**.
+- `status: "needs_changes"` → Go to **STEP 3**.
+- `status: "needs_clarification"` → Read `clarification_questions`, ask user with `AskUserQuestion`, write answers to `.task/user-plan-feedback.json`, then go to **STEP 3**.
+- `status: "rejected"` → Escalate to user.
+
+**→ YOUR NEXT ACTION: Follow the branch above. No summarizing.**
+
+### STEP 3: Phase 3 — Plan Revision
+
+Mark T3 as `in_progress`. Launch analyzer with review findings:
+```
+Task({
+  subagent_type: "aipilot:analyzer",
+  model: "opus",
+  prompt: "<task_description>\n{USER_TASK}\n</task_description>\n\n<review_findings>\n{FINDINGS_FROM_PLAN_REVIEW}\n</review_findings>\n\nProject directory: <PROJECT_DIR>",
+  description: "Revise plan"
+})
+```
+
+Mark T3 as `completed`.
+
+**→ YOUR NEXT ACTION: Loop back to STEP 2 (max 3 iterations, then escalate to user).**
+
+### STEP 4: Phase 4 — User Review (ONLY STOP POINT)
+
+Mark T4 as `in_progress`. This is the ONE place you stop and ask the user.
+
+Tell the user: "The plan is ready for review at `.task/plan.md`."
+
+Use `AskUserQuestion`:
+- "Plan approved" → Mark T4 as `completed`. Go to **STEP 5**.
+- "I want changes" → Ask what should change, write to `.task/user-plan-feedback.json`, launch analyzer revision, re-run plan review, return here. Max 3 iterations.
+- "Cancel pipeline" → Stop.
+
+### STEP 5: Phase 5 — Step-by-Step Implementation + Review
+
+Read `.task/plan.json` to get `total_steps`. Create per-step tasks:
+```
+For each step N (1..total_steps):
+  TaskCreate({ subject: "Phase 5a: Implement step N - [title]", ... })  → T-impl-N
+  TaskCreate({ subject: "Phase 5b: Review step N", ... })               → T-review-N, blockedBy T-impl-N
+TaskCreate({ subject: "Phase 6: Final review", ... })                   → blockedBy last T-review-N
+TaskCreate({ subject: "Phase 7: UI verification", ... })                → blockedBy Phase 6
+```
+
+**For each step N (1 to total_steps):**
+
+**5a.** Mark T-impl-N as `in_progress`. Launch implementer:
+```
+Task({
+  subagent_type: "aipilot:implementer",
+  model: "opus",
+  prompt: "<step_id>\nN\n</step_id>\n\nProject directory: <PROJECT_DIR>",
+  description: "Implement step N"
+})
+```
+Mark T-impl-N as `completed`.
+
+**5b.** Mark T-review-N as `in_progress`. Run Codex:
+```
+Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type step-review --step-id N --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR>")
+```
+Read `.task/step-N-review.json`. Mark T-review-N as `completed`.
+
+- `approved` → Continue to step N+1
+- `needs_changes` → Re-launch implementer with `<fix_findings>`, re-review with `--resume --changes-summary`. Max 3 iterations.
+- `rejected` → Escalate to user.
+
+**→ After ALL steps, write `.task/impl-result.json` combining all step results. IMMEDIATELY go to STEP 6.**
+
+### STEP 6: Phase 6 — Final Review
+
+Run Codex:
+```
+Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type final-review --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR>")
+```
+
+- `approved` → Go to **STEP 7**.
+- `needs_changes` → Launch implementer to fix, re-review. Max 3 iterations.
+
+**→ YOUR NEXT ACTION: Go to STEP 7.**
+
+### STEP 7: Phase 7 — UI Verification (conditional)
+
+Only if `has_ui_changes: true` in `.task/impl-result.json`.
+
+Launch UI verifier:
+```
+Task({
+  subagent_type: "aipilot:ui-verifier",
+  model: "opus",
+  prompt: "<verification_scope>\n{WHAT_TO_VERIFY}\n</verification_scope>\n\nProject directory: <PROJECT_DIR>",
+  description: "Verify UI changes"
+})
+```
+
+If issues found → fix and re-verify. Max 2 iterations.
+
+### STEP 8: Completion
+
+NOW you may summarize all changes to the user and report final status.
+
+## Pipeline Overview (Reference)
 
 ```
 Phase 1: Analyze & Plan       (Opus)      → .task/plan.md + .task/plan.json (1-5 steps)
@@ -24,274 +200,6 @@ Phase 5: Step-by-Step Implementation + Per-Step Review
 Phase 6: Final Review          (Codex)     → .task/code-review.json (all changes)
 Phase 7: UI Verification       (Opus)      → .task/ui-review.json (if UI changes)
 ```
-
-## Your Role
-
-You are the orchestrator. You coordinate the pipeline by:
-1. Creating the task chain with `TaskCreate` and `blockedBy` dependencies
-2. Launching Opus agents via the `Task` tool (analyzer, implementer, ui-verifier)
-3. Running Codex reviews via `Bash` tool (plan review, step review, final review)
-4. Reading agent/review outputs and deciding next steps
-5. Handling iteration loops (review → fix → re-review)
-6. Communicating progress to the user
-
-You do NOT write code or analyze the codebase yourself — you delegate to specialized agents and Codex CLI.
-
-## CRITICAL: Automatic Pipeline Flow
-
-You MUST run the entire pipeline end-to-end **without stopping** between phases. After each phase completes, you IMMEDIATELY proceed to the next phase. Do NOT summarize results and wait for user input between phases.
-
-The ONLY point where you stop and wait for the user is **Phase 4 (User Review)**.
-
-**Correct flow:**
-```
-Phase 1 → automatically → Phase 2 → automatically → Phase 3 (if needed) → automatically → Phase 4 (STOP: ask user)
-Phase 4 approved → automatically → Phase 5 (all steps) → automatically → Phase 6 → automatically → Phase 7 (if needed) → Done
-```
-
-**NEVER do this:**
-- Do NOT stop after Phase 1 to ask the user if they want to proceed
-- Do NOT summarize the plan and ask "Soll ich den Plan lesen?"
-- Do NOT wait for user confirmation between any phases except Phase 4
-- Do NOT skip any phase (except Phase 3 if plan review passes, and Phase 7 if no UI changes)
-
-<agent_launch_templates>
-
-## How to Launch Agents and Reviews
-
-### Launching an Opus Agent (Task tool)
-
-Use the `Task` tool with `subagent_type` matching the agent name and `model: "opus"`. ALWAYS wrap agent input in the XML tags the agent expects.
-
-**Analyzer — initial analysis:**
-```
-Task({
-  subagent_type: "aipilot:analyzer",
-  model: "opus",
-  prompt: "<task_description>\nUser's task description here\n</task_description>\n\nProject directory: /path/to/project",
-  description: "Analyze and plan"
-})
-```
-
-**Analyzer — revision after review:**
-```
-Task({
-  subagent_type: "aipilot:analyzer",
-  model: "opus",
-  prompt: "<task_description>\nOriginal task description\n</task_description>\n\n<review_findings>\nFindings from plan-review.json or user feedback here\n</review_findings>\n\nProject directory: /path/to/project",
-  description: "Revise plan"
-})
-```
-
-**Implementer — implement step N:**
-```
-Task({
-  subagent_type: "aipilot:implementer",
-  model: "opus",
-  prompt: "<step_id>\nN\n</step_id>\n\nProject directory: /path/to/project",
-  description: "Implement step N"
-})
-```
-
-**Implementer — fix step N after review:**
-```
-Task({
-  subagent_type: "aipilot:implementer",
-  model: "opus",
-  prompt: "<step_id>\nN\n</step_id>\n\n<fix_findings>\nFindings from step-N-review.json here\n</fix_findings>\n\nProject directory: /path/to/project",
-  description: "Fix step N"
-})
-```
-
-**UI Verifier:**
-```
-Task({
-  subagent_type: "aipilot:ui-verifier",
-  model: "opus",
-  prompt: "<verification_scope>\nDescription of what UI changes to verify, based on impl-result.json\n</verification_scope>\n\nProject directory: /path/to/project",
-  description: "Verify UI changes"
-})
-```
-
-### Running a Codex Review (Bash tool)
-
-Use the `Bash` tool to run the codex-review.js script. Resolve paths as follows:
-- **Plugin root (`<PLUGIN_ROOT>`)**: The aipilot plugin directory (contains `scripts/`, `docs/`, `skills/`)
-- **Project directory (`<PROJECT_DIR>`)**: The current working directory or `process.env.CLAUDE_PROJECT_DIR`
-
-To find the plugin root, first run:
-```
-Bash("find / -path '*/aipilot/scripts/codex-review.js' -type f 2>/dev/null | head -1")
-```
-Strip `/scripts/codex-review.js` from the result to get `<PLUGIN_ROOT>`. Cache both paths for the session.
-
-**Standard call format:**
-```
-Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type plan --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR>")
-```
-
-**With `--resume` for fix iterations (re-reviews after fixes):**
-```
-Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type step-review --step-id N --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR> --resume")
-```
-
-**With `--changes-summary` for focused re-reviews:**
-```
-Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type step-review --step-id N --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR> --resume --changes-summary 'Fixed XSS in input handler, added validation'")
-```
-
-**Exit codes:**
-- `0` = success (review JSON written and validated)
-- `1` = validation error (output did not pass schema checks)
-- `2` = Codex error (CLI failed)
-- `3` = timeout
-
-</agent_launch_templates>
-
-## Startup Sequence
-
-When the user invokes this skill:
-
-1. **Ask for the task description** if not already provided
-2. **Codex Preflight Check** — Run BEFORE anything else:
-   ```
-   Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type preflight")
-   ```
-   - If exit code 0 and stdout contains `"ok": true` → continue
-   - If exit code 2 or stdout contains `"error"` → **ABORT the pipeline immediately**. Tell the user: "Codex CLI is not available. The pipeline requires Codex for code reviews. Please install Codex and try again."
-   - Do NOT proceed to any phase if preflight fails.
-3. **Initialize the pipeline:**
-   - Copy `.task.template/state.json` to project `.task/state.json` (create `.task/` if needed)
-   - Create the task chain (see below)
-4. **Run Phase 1** immediately
-5. **After Phase 1 completes** → immediately run Phase 2 (Codex plan review)
-6. **Continue automatically** through Phase 2 → 3 → 4 (first user stop point)
-
-## Task Chain Creation
-
-Create these initial tasks using `TaskCreate`. Use `TaskUpdate` with `addBlockedBy` to set dependencies after creation (you need the task IDs first):
-
-1. `TaskCreate({ subject: "Phase 1: Analyze codebase and create plan", ... })` → save ID as T1
-2. `TaskCreate({ subject: "Phase 2: Codex plan review", ... })` → save ID as T2, then `TaskUpdate({ taskId: T2, addBlockedBy: [T1] })`
-3. `TaskCreate({ subject: "Phase 3: Revise plan (if needed)", ... })` → save ID as T3, then `TaskUpdate({ taskId: T3, addBlockedBy: [T2] })`
-4. `TaskCreate({ subject: "Phase 4: User review of plan", ... })` → save ID as T4, then `TaskUpdate({ taskId: T4, addBlockedBy: [T3] })`
-
-After Phase 4 (plan approved), create per-step tasks dynamically. Read `plan.json`, count the `steps` array, then for each step N:
-
-5. `TaskCreate({ subject: "Phase 5a: Implement step N - [title]", ... })` → T-impl-N
-6. `TaskCreate({ subject: "Phase 5b: Codex review step N", ... })` → T-review-N, blockedBy T-impl-N
-
-Chain: T-impl-1 → T-review-1 → T-impl-2 → T-review-2 → ... → T-final-review → T-ui
-
-7. `TaskCreate({ subject: "Phase 6: Final code review", ... })` → blockedBy last T-review-N
-8. `TaskCreate({ subject: "Phase 7: UI verification", ... })` → blockedBy T-final-review
-
-Store all task IDs in `.task/pipeline-tasks.json` for reference.
-
-<phase_execution>
-
-## Phase Execution
-
-### Phase 1: Analyze & Plan
-- Launch `analyzer` agent (model: opus) with the user's task description wrapped in `<task_description>` tags
-- Agent reads codebase, creates `.task/plan.md` and `.task/plan.json`
-- Mark T1 complete when done
-- **→ IMMEDIATELY proceed to Phase 2. Do NOT stop here.**
-
-### Phase 2: Plan Review
-- Run Codex CLI via `Bash` tool (use the cached plugin root from startup):
-  ```
-  node <PLUGIN_ROOT>/scripts/codex-review.js --type plan --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR>
-  ```
-- Codex reads `.task/plan.md` and `.task/plan.json`, writes `.task/plan-review.json`
-- Read `.task/plan-review.json` to check result
-- If `status: "approved"` → skip Phase 3, **immediately** go to Phase 4
-- If `status: "needs_changes"` → **immediately** proceed to Phase 3
-- If `status: "needs_clarification"` → read `clarification_questions` array, use `AskUserQuestion` to ask the user, then write answers to `.task/user-plan-feedback.json` and re-run Phase 3 → Phase 2
-- If `status: "rejected"` → escalate to user immediately
-
-### Phase 3: Plan Revision
-- Launch `analyzer` agent again with `<task_description>` (original task) and `<review_findings>` (from plan-review.json)
-- Agent updates `.task/plan.md` and `.task/plan.json`
-- **→ IMMEDIATELY loop back to Phase 2** (max 3 iterations, then escalate to user)
-
-### Phase 4: User Review
-- Tell the user: "The plan is ready for review at `.task/plan.md`. Please review it, make any edits, and confirm when ready."
-- Use `AskUserQuestion` with options: "Plan approved", "I want changes", "Cancel pipeline"
-- If **"Plan approved"** → continue to Phase 5
-- If **"Cancel pipeline"** → stop
-- If **"I want changes"**:
-  1. Ask the user to describe what should change (use `AskUserQuestion` with free text)
-  2. Write the user's feedback to `.task/user-plan-feedback.json`:
-     ```json
-     {
-       "status": "needs_changes",
-       "feedback": "User's description of requested changes",
-       "iteration": 1
-     }
-     ```
-  3. Launch `analyzer` agent (Opus) with `<task_description>` and `<review_findings>` containing the user feedback
-  4. Run Codex CLI plan review on the revised plan
-  5. Return to Phase 4 — present the revised plan to the user again
-  6. Max 3 user-revision iterations, then escalate
-
-### Phase 5: Step-by-Step Implementation + Per-Step Review
-
-After plan approval, read `.task/plan.json` to get `total_steps`. Update state with `current_step: 1` and `total_steps`.
-
-**For each step N (1 to total_steps):**
-
-1. Update state: `current_step: N`, `phase: "implementing_step_N"`
-2. **5a: Implement Step N**
-   - Launch `implementer` agent (model: opus) with `<step_id>N</step_id>`
-   - Agent reads `.task/plan.json`, implements ONLY step N
-   - Agent writes `.task/step-N-result.json`
-3. **5b: Review Step N**
-   - Run Codex CLI via `Bash` tool:
-     ```
-     node <PLUGIN_ROOT>/scripts/codex-review.js --type step-review --step-id N --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR>
-     ```
-   - Codex reviews ONLY changes from step N, verifies step completeness
-   - Codex writes `.task/step-N-review.json`
-4. **Handle review result:**
-   - If `status: "approved"` → proceed to step N+1
-   - If `status: "needs_changes"` → re-launch implementer with `<step_id>N</step_id>` and `<fix_findings>` from step-N-review.json, then re-review with `--resume` and `--changes-summary`. Max 3 fix iterations per step.
-   - If `status: "rejected"` → escalate to user immediately (fundamental problem with this step)
-   - If max iterations exhausted → escalate to user
-
-After ALL steps complete, write `.task/impl-result.json` as a summary combining all `step-N-result.json` files:
-```json
-{
-  "status": "complete",
-  "has_ui_changes": true|false,
-  "total_steps": 3,
-  "steps_completed": [ /* merged from all step-N-result.json */ ],
-  "files_changed": [ /* all files from all steps */ ]
-}
-```
-
-### Phase 6: Final Code Review
-- Run Codex CLI via `Bash` tool:
-  ```
-  node <PLUGIN_ROOT>/scripts/codex-review.js --type final-review --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR>
-  ```
-- Codex reviews ALL changes across all steps, verifies overall completeness against the full plan
-- Codex writes `.task/code-review.json`
-- If `status: "needs_changes"` → launch implementer to fix (reads `.task/code-review.json`), then re-review (max 3 iterations)
-- If `status: "approved"` → continue
-
-### Phase 7: UI Verification (conditional)
-- Only if `has_ui_changes: true` in impl-result
-- Launch `ui-verifier` agent (model: opus) with `<verification_scope>` describing what to verify
-- Agent uses Playwright MCP to navigate the app, take screenshots, verify visually
-- Writes `.task/ui-review.json`
-- If issues found → launch implementer to fix, then re-verify
-
-### Completion
-- Summarize all changes to the user
-- Report final status
-
-</phase_execution>
 
 ## State Management
 
@@ -310,7 +218,20 @@ Update `.task/state.json` after each phase transition:
 }
 ```
 
-Phase values during step execution: `implementing_step_N`, `reviewing_step_N`, `final_review`.
+Phase values: `analyzing`, `plan_review`, `plan_revision`, `user_review`, `implementing_step_N`, `reviewing_step_N`, `final_review`, `ui_verification`, `complete`.
+
+## impl-result.json Format
+
+After ALL steps complete, write `.task/impl-result.json`:
+```json
+{
+  "status": "complete",
+  "has_ui_changes": true,
+  "total_steps": 3,
+  "steps_completed": [],
+  "files_changed": []
+}
+```
 
 <rules>
 
@@ -330,9 +251,21 @@ Phase values during step execution: `implementing_step_N`, `reviewing_step_N`, `
 - If Playwright is unavailable → skip UI verification, warn user
 
 ### Agent Communication
-- ALWAYS wrap agent input in the XML tags the agent expects (see agent launch templates above)
-- NEVER pass plain-text parameters — use `<task_description>`, `<step_id>`, `<fix_findings>`, `<review_findings>`, `<verification_scope>`
+- ALWAYS wrap agent input in the XML tags the agent expects: `<task_description>`, `<step_id>`, `<fix_findings>`, `<review_findings>`, `<verification_scope>`
+- NEVER pass plain-text parameters
 - NEVER write code or analyze the codebase yourself — delegate to agents
 - NEVER stop between phases except at Phase 4 (User Review)
+- NEVER summarize intermediate results — just proceed to the next step
+
+### Codex Review Flags
+- `--plugin-root <PLUGIN_ROOT>` — always pass for schema/standards resolution
+- `--resume` — use when re-reviewing after fixes
+- `--changes-summary "..."` — use with --resume for focused re-reviews
+
+### Exit Codes (codex-review.js)
+- `0` = success
+- `1` = validation error
+- `2` = Codex error
+- `3` = timeout
 
 </rules>
