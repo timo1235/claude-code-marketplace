@@ -1,0 +1,11 @@
+{
+  "phase": "idle",
+  "plan_approved": false,
+  "implementation_complete": false,
+  "code_review_passed": false,
+  "ui_review_passed": false,
+  "has_ui_changes": false,
+  "iteration": 0,
+  "started_at": null,
+  "updated_at": null
+}

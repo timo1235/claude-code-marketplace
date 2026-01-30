@@ -1,0 +1,183 @@
+#!/usr/bin/env node
+
+/**
+ * SubagentStop hook: Validates review outputs and enforces quality gates.
+ *
+ * Runs when any subagent finishes. Checks if review artifacts exist and
+ * are properly structured. Can BLOCK if reviews are invalid.
+ */
+
+const fs = require('fs');
+const path = require('path');
+
+function getProjectDir() {
+  return process.env.CLAUDE_PROJECT_DIR || process.cwd();
+}
+
+function readJsonSafe(filePath) {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function fileExists(filePath) {
+  try {
+    fs.accessSync(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getModTimeMs(filePath) {
+  try {
+    return fs.statSync(filePath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+function validatePlanReview(taskDir) {
+  const reviewPath = path.join(taskDir, 'plan-review.json');
+  if (!fileExists(reviewPath)) {
+    return null; // Not a plan review agent
+  }
+
+  const review = readJsonSafe(reviewPath);
+  if (!review) {
+    return { decision: 'block', reason: 'plan-review.json exists but is not valid JSON.' };
+  }
+
+  if (!['approved', 'needs_changes', 'rejected'].includes(review.status)) {
+    return {
+      decision: 'block',
+      reason: `plan-review.json has invalid status: "${review.status}". Must be "approved", "needs_changes", or "rejected".`
+    };
+  }
+
+  if (!review.findings || !Array.isArray(review.findings)) {
+    return {
+      decision: 'block',
+      reason: 'plan-review.json is missing "findings" array.'
+    };
+  }
+
+  if (!review.requirements_coverage) {
+    return {
+      decision: 'block',
+      reason: 'plan-review.json is missing "requirements_coverage" section.'
+    };
+  }
+
+  return null; // Valid
+}
+
+function validateCodeReview(taskDir) {
+  const reviewPath = path.join(taskDir, 'code-review.json');
+  if (!fileExists(reviewPath)) {
+    return null; // Not a code review agent
+  }
+
+  const review = readJsonSafe(reviewPath);
+  if (!review) {
+    return { decision: 'block', reason: 'code-review.json exists but is not valid JSON.' };
+  }
+
+  if (!['approved', 'needs_changes', 'rejected'].includes(review.status)) {
+    return {
+      decision: 'block',
+      reason: `code-review.json has invalid status: "${review.status}". Must be "approved", "needs_changes", or "rejected".`
+    };
+  }
+
+  if (!review.findings || !Array.isArray(review.findings)) {
+    return {
+      decision: 'block',
+      reason: 'code-review.json is missing "findings" array.'
+    };
+  }
+
+  if (!review.plan_adherence) {
+    return {
+      decision: 'block',
+      reason: 'code-review.json is missing "plan_adherence" section.'
+    };
+  }
+
+  return null; // Valid
+}
+
+function validateImplResult(taskDir) {
+  const resultPath = path.join(taskDir, 'impl-result.json');
+  if (!fileExists(resultPath)) {
+    return null; // Not an implementer agent
+  }
+
+  const result = readJsonSafe(resultPath);
+  if (!result) {
+    return { decision: 'block', reason: 'impl-result.json exists but is not valid JSON.' };
+  }
+
+  if (!['complete', 'partial', 'failed'].includes(result.status)) {
+    return {
+      decision: 'block',
+      reason: `impl-result.json has invalid status: "${result.status}". Must be "complete", "partial", or "failed".`
+    };
+  }
+
+  if (typeof result.has_ui_changes !== 'boolean') {
+    return {
+      decision: 'block',
+      reason: 'impl-result.json is missing "has_ui_changes" boolean field.'
+    };
+  }
+
+  return null; // Valid
+}
+
+function main() {
+  const projectDir = getProjectDir();
+  const taskDir = path.join(projectDir, '.task');
+
+  if (!fileExists(taskDir)) {
+    process.exit(0); // No pipeline active
+    return;
+  }
+
+  // Check which artifacts were recently modified (within last 30 seconds)
+  const now = Date.now();
+  const recentThreshold = 30000;
+
+  const checks = [];
+
+  const planReviewTime = getModTimeMs(path.join(taskDir, 'plan-review.json'));
+  if (now - planReviewTime < recentThreshold) {
+    checks.push(validatePlanReview(taskDir));
+  }
+
+  const codeReviewTime = getModTimeMs(path.join(taskDir, 'code-review.json'));
+  if (now - codeReviewTime < recentThreshold) {
+    checks.push(validateCodeReview(taskDir));
+  }
+
+  const implResultTime = getModTimeMs(path.join(taskDir, 'impl-result.json'));
+  if (now - implResultTime < recentThreshold) {
+    checks.push(validateImplResult(taskDir));
+  }
+
+  // Find first blocking result
+  for (const result of checks) {
+    if (result && result.decision === 'block') {
+      console.log(JSON.stringify(result));
+      process.exit(0);
+      return;
+    }
+  }
+
+  // All clear
+  process.exit(0);
+}
+
+main();

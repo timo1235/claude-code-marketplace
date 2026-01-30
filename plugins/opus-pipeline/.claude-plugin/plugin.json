@@ -1,0 +1,20 @@
+{
+  "name": "opus-pipeline",
+  "version": "1.0.0",
+  "description": "Multi-AI orchestration pipeline: Opus plans, Codex reviews, User approves, Opus implements, Playwright verifies UI",
+  "author": {
+    "name": "Timo",
+    "url": "https://github.com/timo1235"
+  },
+  "license": "MIT",
+  "keywords": [
+    "multi-ai",
+    "orchestration",
+    "pipeline",
+    "opus",
+    "codex",
+    "playwright",
+    "ui-verification"
+  ],
+  "skills": "./skills/"
+}
