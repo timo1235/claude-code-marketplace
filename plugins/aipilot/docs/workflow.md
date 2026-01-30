@@ -17,7 +17,7 @@
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  Phase 2: PLAN REVIEW                                            │
-│  Tool: Codex CLI (via codex-review.js)                           │
+│  Codex CLI via Bash: codex-review.js --type plan                 │
 │  Output: .task/plan-review.json                                  │
 │                                                                  │
 │  ┌─────────────┐  ┌──────────────┐  ┌──────────┐               │
@@ -61,7 +61,7 @@
 │  │                     │                                  │       │
 │  │                     ▼                                  │       │
 │  │  5b: Review Step N                                     │       │
-│  │  Tool: Codex CLI with step_id: N                       │       │
+│  │  Codex CLI via Bash: --type step-review --step-id N    │       │
 │  │  Output: .task/step-N-review.json                      │       │
 │  │                     │                                  │       │
 │  │       ┌─────────────┼──────────────┐                   │       │
@@ -83,7 +83,7 @@
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  Phase 6: FINAL CODE REVIEW                                      │
-│  Tool: Codex CLI with step_id: "final"                           │
+│  Codex CLI via Bash: codex-review.js --type final-review         │
 │  Reviews ALL changes, verifies overall plan completeness         │
 │  Output: .task/code-review.json                                  │
 │                                                                  │

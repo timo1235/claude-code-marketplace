@@ -4,11 +4,11 @@
 
 | Agent | Model | Role | I/O |
 |-------|-------|------|-----|
-| analyzer | opus | Codebase analysis + plan creation (1-5 steps) | → plan.md, plan.json |
-| plan-reviewer | codex | Plan verification | plan.md → plan-review.json |
-| implementer | opus | Single-step implementation (one step at a time) | plan.json + step_id → step-N-result.json |
-| code-reviewer | codex | Step review or final review (dual mode) | changed files + step_id → step-N-review.json or code-review.json |
-| ui-verifier | opus | Visual UI verification via Playwright | running app → ui-review.json |
+| analyzer | Opus (Task agent) | Codebase analysis + plan creation (1-5 steps) | → plan.md, plan.json |
+| plan-reviewer | Codex CLI (Bash) | Plan verification | plan.md → plan-review.json |
+| implementer | Opus (Task agent) | Single-step implementation (one step at a time) | plan.json + step_id → step-N-result.json |
+| code-reviewer | Codex CLI (Bash) | Step review or final review (dual mode) | changed files → step-N-review.json or code-review.json |
+| ui-verifier | Opus (Task agent) | Visual UI verification via Playwright | running app → ui-review.json |
 
 ## Agent Details
 
@@ -38,24 +38,17 @@
 
 ### plan-reviewer
 
-**Personas:** Architect Reviewer + Security Auditor + QA Expert
+**Invocation:** Codex CLI via `node codex-review.js --type plan`
 
 **Purpose:** Verify plan quality, find gaps, assess risks.
 
 **Input:**
 - `.task/plan.md` and `.task/plan.json`
-- Codebase access for validation
 
 **Output:**
 - `.task/plan-review.json`
 
-**Rules:**
-- MUST verify every plan step is feasible
-- MUST check for missing steps or dependencies
-- MUST assess security implications
-- MUST check that plan addresses the full user requirement
-- Does NOT modify the plan
-- Does NOT write code
+**Verification:** Check `.task/codex_stderr.log` for Codex CLI output. The script logs `[codex-review] Starting plan review using Codex at ...` to stderr.
 
 ### implementer
 
@@ -83,29 +76,23 @@
 
 ### code-reviewer
 
-**Personas:** Security Auditor + Performance Engineer + Quality Reviewer
+**Invocation:** Codex CLI via `node codex-review.js --type step-review|final-review`
 
 **Purpose:** Review code changes in two modes: per-step review or final review of all changes.
 
-**Mode 1 — Step Review** (`step_id: N`):
+**Mode 1 — Step Review** (`--type step-review --step-id N`):
 - Reviews ONLY changes from step N
 - Verifies step completeness
 - Input: `.task/plan.json` (step N) + `.task/step-N-result.json`
 - Output: `.task/step-N-review.json`
 
-**Mode 2 — Final Review** (`step_id: "final"`):
+**Mode 2 — Final Review** (`--type final-review`):
 - Reviews ALL changes across all steps
 - Verifies overall plan completeness
-- Input: `.task/plan.json` + `.task/impl-result.json` + all step results
+- Input: `.task/plan.json` + `.task/impl-result.json`
 - Output: `.task/code-review.json`
 
-**Rules:**
-- MUST check every changed file relevant to the review scope
-- MUST verify plan adherence (step-level or full plan)
-- MUST flag security issues (OWASP Top 10)
-- MUST check for dead code, unused imports
-- MUST verify tests exist for new logic
-- Does NOT modify code
+**Verification:** Check `.task/codex_stderr.log` for Codex CLI output. The script logs `[codex-review] Starting step-review review (step N) using Codex at ...` to stderr.
 
 ### ui-verifier
 

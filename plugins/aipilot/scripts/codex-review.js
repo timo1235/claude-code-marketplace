@@ -4,13 +4,19 @@
  * Codex CLI wrapper for plan and code reviews.
  *
  * Usage:
- *   node codex-review.js --type plan|code --project-dir /path/to/project
+ *   node codex-review.js --type plan|step-review|final-review --project-dir /path [--step-id N]
+ *
+ * Types:
+ *   plan          - Review the implementation plan → .task/plan-review.json
+ *   step-review   - Review a single step (requires --step-id) → .task/step-N-review.json
+ *   final-review  - Review all changes across all steps → .task/code-review.json
  *
  * This script:
  * 1. Reads the relevant input files
- * 2. Constructs a prompt for Codex
+ * 2. Constructs a prompt for Codex CLI
  * 3. Runs Codex CLI with the prompt
  * 4. Writes the review output to .task/
+ * 5. Logs to stderr for verification (check .task/codex_stderr.log)
  */
 
 const { execSync, spawn } = require('child_process');
@@ -21,7 +27,7 @@ const TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const result = { type: null, projectDir: null };
+  const result = { type: null, projectDir: null, stepId: null };
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--type' && args[i + 1]) {
@@ -30,6 +36,10 @@ function parseArgs() {
     }
     if (args[i] === '--project-dir' && args[i + 1]) {
       result.projectDir = args[i + 1];
+      i++;
+    }
+    if (args[i] === '--step-id' && args[i + 1]) {
+      result.stepId = args[i + 1];
       i++;
     }
   }
@@ -110,7 +120,71 @@ Write a JSON review to stdout with this exact structure:
 Only output valid JSON. No other text.`;
 }
 
-function buildCodeReviewPrompt(taskDir, projectDir) {
+function buildStepReviewPrompt(taskDir, projectDir, stepId) {
+  const planJson = readFileSafe(path.join(taskDir, 'plan.json'));
+  const stepResult = readFileSafe(path.join(taskDir, `step-${stepId}-result.json`));
+
+  if (!stepResult) {
+    throw new Error(`Missing step-${stepId}-result.json`);
+  }
+
+  let gitDiff = '';
+  try {
+    gitDiff = execSync('git diff HEAD', {
+      cwd: projectDir,
+      encoding: 'utf8',
+      maxBuffer: 10 * 1024 * 1024
+    });
+  } catch {
+    gitDiff = '(Could not get git diff)';
+  }
+
+  return `You are a code reviewer. Review ONLY the changes from step ${stepId} of the implementation plan.
+
+## Implementation Plan
+
+${planJson || '(Not available)'}
+
+## Step ${stepId} Result
+
+${stepResult}
+
+## Git Diff
+
+${gitDiff}
+
+## Your Task
+
+Review only step ${stepId}. Verify that everything in this step is complete and correct.
+
+Write a JSON review to stdout with this exact structure:
+
+{
+  "step_id": ${stepId},
+  "status": "approved|needs_changes",
+  "summary": "One paragraph assessment of this step",
+  "step_adherence": {
+    "implemented": true,
+    "correct": true,
+    "notes": ""
+  },
+  "findings": [
+    {
+      "severity": "critical|major|minor|suggestion",
+      "category": "bug|security|performance|quality|testing|dead-code",
+      "file": "path/to/file",
+      "line": 0,
+      "description": "Issue description",
+      "recommendation": "How to fix"
+    }
+  ],
+  "verdict": "What must change (if not approved)"
+}
+
+Only output valid JSON. No other text.`;
+}
+
+function buildFinalReviewPrompt(taskDir, projectDir) {
   const planJson = readFileSafe(path.join(taskDir, 'plan.json'));
   const implResult = readFileSafe(path.join(taskDir, 'impl-result.json'));
 
@@ -129,13 +203,13 @@ function buildCodeReviewPrompt(taskDir, projectDir) {
     gitDiff = '(Could not get git diff)';
   }
 
-  return `You are a code reviewer. Review the following implementation changes.
+  return `You are a code reviewer. Review ALL implementation changes across all steps. Verify overall completeness against the full plan.
 
 ## Implementation Plan
 
 ${planJson || '(Not available)'}
 
-## Implementation Result
+## Implementation Result (all steps)
 
 ${implResult}
 
@@ -144,6 +218,8 @@ ${implResult}
 ${gitDiff}
 
 ## Your Task
+
+Review all changes together. Verify that every plan step was implemented correctly and the overall result is complete.
 
 Write a JSON review to stdout with this exact structure:
 
@@ -254,64 +330,94 @@ async function runCodex(codexPath, prompt, outputPath, projectDir, reviewType) {
   });
 }
 
-async function main() {
-  const { type, projectDir } = parseArgs();
+function getOutputPath(taskDir, type, stepId) {
+  switch (type) {
+    case 'plan': return path.join(taskDir, 'plan-review.json');
+    case 'step-review': return path.join(taskDir, `step-${stepId}-review.json`);
+    case 'final-review': return path.join(taskDir, 'code-review.json');
+    default: return path.join(taskDir, 'code-review.json');
+  }
+}
 
-  if (!type || !['plan', 'code'].includes(type)) {
-    console.error('Usage: codex-review.js --type plan|code --project-dir /path');
+function buildSkipResult(type, stepId) {
+  const skipResult = {
+    status: 'needs_changes',
+    summary: 'Codex CLI not available. Review skipped.',
+    findings: [],
+    verdict: 'Codex not installed. Pipeline continues without Codex gate.'
+  };
+
+  if (type === 'plan') {
+    skipResult.requirements_coverage = {
+      fully_covered: [],
+      partially_covered: [],
+      missing: ['Codex unavailable - manual review recommended']
+    };
+  } else if (type === 'step-review') {
+    skipResult.step_id = parseInt(stepId, 10);
+    skipResult.step_adherence = {
+      implemented: false,
+      correct: false,
+      notes: 'Codex unavailable - manual review recommended'
+    };
+  } else {
+    skipResult.plan_adherence = {
+      steps_verified: [],
+      deviations: ['Codex unavailable - manual review recommended']
+    };
+  }
+
+  return skipResult;
+}
+
+async function main() {
+  const { type, projectDir, stepId } = parseArgs();
+
+  const validTypes = ['plan', 'step-review', 'final-review'];
+  if (!type || !validTypes.includes(type)) {
+    console.error('Usage: codex-review.js --type plan|step-review|final-review --project-dir /path [--step-id N]');
+    process.exit(1);
+  }
+
+  if (type === 'step-review' && !stepId) {
+    console.error('--step-id is required for step-review type');
     process.exit(1);
   }
 
   const dir = projectDir || process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const taskDir = path.join(dir, '.task');
+  const outputPath = getOutputPath(taskDir, type, stepId);
 
   // Find Codex
   const codexPath = findCodex();
   if (!codexPath) {
     console.error('Codex CLI not found. Install it or add it to PATH.');
-
-    // Write a skip result with all required fields for review-gate validation
-    const skipResult = {
-      status: 'needs_changes',
-      summary: 'Codex CLI not available. Review skipped.',
-      findings: [],
-      verdict: 'Codex not installed. Pipeline continues without Codex gate.'
-    };
-
-    if (type === 'plan') {
-      skipResult.requirements_coverage = {
-        fully_covered: [],
-        partially_covered: [],
-        missing: ['Codex unavailable - manual review recommended']
-      };
-    } else {
-      skipResult.plan_adherence = {
-        steps_verified: [],
-        deviations: ['Codex unavailable - manual review recommended']
-      };
-    }
-
-    const outputFile = type === 'plan' ? 'plan-review.json' : 'code-review.json';
-    fs.writeFileSync(path.join(taskDir, outputFile), JSON.stringify(skipResult, null, 2));
+    fs.writeFileSync(outputPath, JSON.stringify(buildSkipResult(type, stepId), null, 2));
     process.exit(0);
   }
 
+  console.error(`[codex-review] Starting ${type} review${stepId ? ` (step ${stepId})` : ''} using Codex at ${codexPath}`);
+
   try {
     let prompt;
-    let outputPath;
 
-    if (type === 'plan') {
-      prompt = buildPlanReviewPrompt(taskDir);
-      outputPath = path.join(taskDir, 'plan-review.json');
-    } else {
-      prompt = buildCodeReviewPrompt(taskDir, dir);
-      outputPath = path.join(taskDir, 'code-review.json');
+    switch (type) {
+      case 'plan':
+        prompt = buildPlanReviewPrompt(taskDir);
+        break;
+      case 'step-review':
+        prompt = buildStepReviewPrompt(taskDir, dir, stepId);
+        break;
+      case 'final-review':
+        prompt = buildFinalReviewPrompt(taskDir, dir);
+        break;
     }
 
     const result = await runCodex(codexPath, prompt, outputPath, dir, type);
-    console.log(JSON.stringify({ success: true, status: result.status }));
+    console.error(`[codex-review] ${type} review complete: ${result.status}`);
+    console.log(JSON.stringify({ success: true, type, stepId: stepId || null, status: result.status }));
   } catch (err) {
-    console.error(`Codex review failed: ${err.message}`);
+    console.error(`[codex-review] Codex review failed: ${err.message}`);
     process.exit(1);
   }
 }

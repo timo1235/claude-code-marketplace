@@ -76,8 +76,12 @@ Store task IDs in `.task/pipeline-tasks.json`.
 - Mark T1 complete when done
 
 ### Phase 2: Plan Review
-- Launch `plan-reviewer` agent (model: codex via script)
-- Agent reads `.task/plan.md` and `.task/plan.json`, writes `.task/plan-review.json`
+- Run Codex CLI via Bash:
+  ```
+  node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type plan --project-dir ${PROJECT_DIR}
+  ```
+- Codex reads `.task/plan.md` and `.task/plan.json`, writes `.task/plan-review.json`
+- Read `.task/plan-review.json` to check result
 - If `status: "needs_changes"` → proceed to Phase 3
 - If `status: "approved"` → skip Phase 3, go to Phase 4
 
@@ -100,7 +104,7 @@ Store task IDs in `.task/pipeline-tasks.json`.
     }
     ```
   - Launch `analyzer` agent (Opus) to revise the plan based on user feedback → Phase 3
-  - Launch `plan-reviewer` agent (Codex) to re-review the revised plan → Phase 2
+  - Run Codex CLI to re-review the revised plan → Phase 2
   - Loop back to Phase 4 (User Review) so the user can verify the revised plan
   - Max 3 user-plan-review iterations, then escalate
 - If **"Plan approved"** → continue to Phase 5
@@ -118,9 +122,12 @@ After plan approval, read `.task/plan.json` to get `total_steps`. Update state w
    - Agent reads `.task/plan.json`, implements ONLY step N
    - Agent writes `.task/step-N-result.json`
 3. **5b: Review Step N**
-   - Launch `code-reviewer` agent (model: codex via script) with `step_id: N`
-   - Agent reviews ONLY changes from step N, verifies step completeness
-   - Agent writes `.task/step-N-review.json`
+   - Run Codex CLI via Bash:
+     ```
+     node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type step-review --step-id N --project-dir ${PROJECT_DIR}
+     ```
+   - Codex reviews ONLY changes from step N, verifies step completeness
+   - Codex writes `.task/step-N-review.json`
 4. **Handle review result:**
    - If `status: "approved"` → proceed to step N+1
    - If `status: "needs_changes"` → re-launch implementer with `step_id: N` (reads `.task/step-N-review.json` for fixes), then re-review. Max 3 fix iterations per step.
@@ -138,9 +145,12 @@ After ALL steps complete, write `.task/impl-result.json` as a summary combining 
 ```
 
 ### Phase 6: Final Code Review
-- Launch `code-reviewer` agent (model: codex via script) with `step_id: "final"`
-- Agent reviews ALL changes across all steps, verifies overall completeness against the full plan
-- Agent writes `.task/code-review.json`
+- Run Codex CLI via Bash:
+  ```
+  node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type final-review --project-dir ${PROJECT_DIR}
+  ```
+- Codex reviews ALL changes across all steps, verifies overall completeness against the full plan
+- Codex writes `.task/code-review.json`
 - If `status: "needs_changes"` → launch implementer to fix (reads `.task/code-review.json`), then re-review (max 3 iterations)
 - If `status: "approved"` → continue
 

@@ -71,11 +71,11 @@ Das Plugin orchestriert verschiedene KI-Modelle in spezialisierten Rollen:
 
 | Agent | Modell | Aufgabe |
 |-------|--------|---------|
-| **analyzer** | Opus | Codebase-Analyse und Planerstellung (1-5 Steps) |
-| **plan-reviewer** | Codex | Plan-Validierung und Risikobewertung |
-| **implementer** | Opus | Einzelschritt-Implementierung (ein Step pro Aufruf) |
-| **code-reviewer** | Codex | Step-Review oder Final-Review (zwei Modi) |
-| **ui-verifier** | Opus + Playwright | Visuelle UI-Verifikation mit Screenshots |
+| **analyzer** | Opus (Task Agent) | Codebase-Analyse und Planerstellung (1-5 Steps) |
+| **plan-reviewer** | Codex CLI (Bash) | Plan-Validierung und Risikobewertung |
+| **implementer** | Opus (Task Agent) | Einzelschritt-Implementierung (ein Step pro Aufruf) |
+| **code-reviewer** | Codex CLI (Bash) | Step-Review oder Final-Review (zwei Modi) |
+| **ui-verifier** | Opus (Task Agent) + Playwright | Visuelle UI-Verifikation mit Screenshots |
 
 #### Verwendung
 
