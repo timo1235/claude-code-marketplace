@@ -115,6 +115,70 @@ function readJsonSafe(filePath) {
   }
 }
 
+// --- Input Validation ---
+
+function validateInputs(type, taskDir, pluginRoot) {
+  const errors = [];
+
+  // Check .task/ directory exists
+  if (!fs.existsSync(taskDir)) {
+    errors.push(`.task/ directory not found at ${taskDir}`);
+    return errors; // Can't check anything else
+  }
+
+  // Check schema files exist
+  const schemaPath = getSchemaPath(pluginRoot, type);
+  if (schemaPath && !fs.existsSync(schemaPath)) {
+    errors.push(`Schema file not found: ${schemaPath}`);
+  }
+
+  // Type-specific input validation
+  switch (type) {
+    case 'plan': {
+      const planMd = path.join(taskDir, 'plan.md');
+      const planJson = path.join(taskDir, 'plan.json');
+      if (!fs.existsSync(planMd)) errors.push('Missing required input: .task/plan.md');
+      if (!fs.existsSync(planJson)) errors.push('Missing required input: .task/plan.json');
+      break;
+    }
+    case 'step-review': {
+      // stepId is validated separately in main()
+      break;
+    }
+    case 'final-review': {
+      const implResult = path.join(taskDir, 'impl-result.json');
+      if (!fs.existsSync(implResult)) errors.push('Missing required input: .task/impl-result.json');
+      break;
+    }
+  }
+
+  // Check standards file
+  const standardsPath = getStandardsPath(pluginRoot);
+  if (standardsPath && !fs.existsSync(standardsPath)) {
+    // Warning only, not a hard error
+    console.error(`[codex-review] Warning: standards.md not found at ${standardsPath}`);
+  }
+
+  return errors;
+}
+
+// --- Error JSON Output ---
+
+function writeErrorResult(outputPath, error, phase) {
+  const errorResult = {
+    status: 'error',
+    error: typeof error === 'string' ? error : error.message || String(error),
+    phase: phase || 'unknown',
+    timestamp: new Date().toISOString(),
+  };
+  try {
+    fs.writeFileSync(outputPath, JSON.stringify(errorResult, null, 2), 'utf8');
+  } catch (writeErr) {
+    console.error(`[codex-review] Failed to write error result: ${writeErr.message}`);
+  }
+  return errorResult;
+}
+
 // --- Codex CLI Discovery ---
 
 function findCodex() {
@@ -504,40 +568,80 @@ async function main() {
   const schemaPath = getSchemaPath(resolvedPluginRoot, type);
   const sessionMarkerPath = getSessionMarker(taskDir, type, stepId);
 
+  // Input validation before starting Codex
+  const inputErrors = validateInputs(type, taskDir, resolvedPluginRoot);
+  if (inputErrors.length > 0) {
+    emitEvent('error', { message: 'Input validation failed', errors: inputErrors });
+    console.error(`[codex-review] Input validation failed:\n${inputErrors.map(e => `  - ${e}`).join('\n')}`);
+    writeErrorResult(outputPath, inputErrors.join('; '), type);
+    process.exit(EXIT_VALIDATION);
+  }
+
   emitEvent('start', { type, stepId: stepId || null, outputPath, resume });
 
   console.error(`[codex-review] Starting ${type} review${stepId ? ` (step ${stepId})` : ''} using Codex at ${codexPath}`);
 
-  try {
-    const prompt = buildPromptFilePaths(taskDir, dir, resolvedPluginRoot, type, stepId, changesSummary);
+  const MAX_RETRIES = 1; // One retry for session-expired
+  let attempt = 0;
+  let currentResume = resume;
 
-    await runCodex(codexPath, prompt, outputPath, schemaPath, dir, sessionMarkerPath, resume);
+  while (attempt <= MAX_RETRIES) {
+    try {
+      const prompt = buildPromptFilePaths(taskDir, dir, resolvedPluginRoot, type, stepId, changesSummary);
 
-    // Validate the output
-    const validation = validateOutput(outputPath, type, stepId);
+      await runCodex(codexPath, prompt, outputPath, schemaPath, dir, sessionMarkerPath, currentResume);
 
-    if (!validation.valid) {
-      emitEvent('error', {
-        message: 'Output validation failed',
-        errors: validation.errors,
+      // Validate the output
+      const validation = validateOutput(outputPath, type, stepId);
+
+      if (!validation.valid) {
+        emitEvent('error', {
+          message: 'Output validation failed',
+          errors: validation.errors,
+        });
+        console.error(`[codex-review] Validation failed:\n${validation.errors.map(e => `  - ${e}`).join('\n')}`);
+        process.exit(EXIT_VALIDATION);
+      }
+
+      emitEvent('complete', {
+        type,
+        stepId: stepId || null,
+        status: validation.parsed.status,
+        findings_count: validation.parsed.findings ? validation.parsed.findings.length : 0,
       });
-      console.error(`[codex-review] Validation failed:\n${validation.errors.map(e => `  - ${e}`).join('\n')}`);
-      process.exit(EXIT_VALIDATION);
-    }
+      console.error(`[codex-review] ${type} review complete: ${validation.parsed.status}`);
+      process.exit(EXIT_SUCCESS);
+    } catch (err) {
+      // Session-expired auto-retry: clear session marker and retry without --resume
+      const isSessionExpired = err.message && (
+        err.message.includes('session expired') ||
+        err.message.includes('Session expired')
+      );
+      // Also check if stderr was captured with session expired
+      const stderrHasExpiry = err.stderr && (
+        err.stderr.includes('session expired') ||
+        err.stderr.includes('Session expired')
+      );
 
-    emitEvent('complete', {
-      type,
-      stepId: stepId || null,
-      status: validation.parsed.status,
-      findings_count: validation.parsed.findings ? validation.parsed.findings.length : 0,
-    });
-    console.error(`[codex-review] ${type} review complete: ${validation.parsed.status}`);
-    process.exit(EXIT_SUCCESS);
-  } catch (err) {
-    const exitCode = err.exitCode || EXIT_CODEX_ERROR;
-    emitEvent('error', { message: err.message, exitCode });
-    console.error(`[codex-review] Codex review failed: ${err.message}`);
-    process.exit(exitCode);
+      if ((isSessionExpired || stderrHasExpiry) && attempt < MAX_RETRIES) {
+        attempt++;
+        emitEvent('session_expired_retry', { attempt });
+        console.error(`[codex-review] Session expired. Clearing session marker and retrying (attempt ${attempt})...`);
+        // Clear session marker
+        if (sessionMarkerPath) {
+          try { fs.unlinkSync(sessionMarkerPath); } catch { /* ignore */ }
+        }
+        // Retry without resume
+        currentResume = false;
+        continue;
+      }
+
+      const exitCode = err.exitCode || EXIT_CODEX_ERROR;
+      emitEvent('error', { message: err.message, exitCode });
+      console.error(`[codex-review] Codex review failed: ${err.message}`);
+      writeErrorResult(outputPath, err.message, type);
+      process.exit(exitCode);
+    }
   }
 }
 

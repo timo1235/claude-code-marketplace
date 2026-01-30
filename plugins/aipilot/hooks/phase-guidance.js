@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * UserPromptSubmit hook: Reads pipeline state and injects phase-specific guidance.
+ * UserPromptSubmit hook: Artifact-based phase detection and guidance injection.
  *
- * This hook runs before every user prompt is processed. It checks the current
- * pipeline state and provides contextual guidance to the orchestrator.
+ * Determines the current pipeline phase by checking which .task/*.json files
+ * exist and their status values — does NOT rely on state.json being up to date.
  */
 
 const fs = require('fs');
@@ -31,6 +31,123 @@ function fileExists(filePath) {
   }
 }
 
+/**
+ * Detect the current phase purely from artifacts in .task/.
+ * Returns { phase, detail } where phase is a human-readable label.
+ */
+function detectPhase(taskDir) {
+  const planMd = fileExists(path.join(taskDir, 'plan.md'));
+  const planJson = fileExists(path.join(taskDir, 'plan.json'));
+  const planReviewPath = path.join(taskDir, 'plan-review.json');
+  const planReview = readJsonSafe(planReviewPath);
+  const userFeedback = fileExists(path.join(taskDir, 'user-plan-feedback.json'));
+  const implResult = readJsonSafe(path.join(taskDir, 'impl-result.json'));
+  const codeReview = readJsonSafe(path.join(taskDir, 'code-review.json'));
+  const uiReview = readJsonSafe(path.join(taskDir, 'ui-review.json'));
+
+  // Find step artifacts
+  const stepResults = [];
+  const stepReviews = [];
+  try {
+    const files = fs.readdirSync(taskDir);
+    for (const f of files) {
+      const resultMatch = f.match(/^step-(\d+)-result\.json$/);
+      if (resultMatch) {
+        stepResults.push({ step: parseInt(resultMatch[1]), data: readJsonSafe(path.join(taskDir, f)) });
+      }
+      const reviewMatch = f.match(/^step-(\d+)-review\.json$/);
+      if (reviewMatch) {
+        stepReviews.push({ step: parseInt(reviewMatch[1]), data: readJsonSafe(path.join(taskDir, f)) });
+      }
+    }
+  } catch {
+    // .task/ might not be listable
+  }
+
+  // Phase 7: UI verification
+  if (uiReview) {
+    return { phase: 'Phase 7: UI Verification', detail: `Status: ${uiReview.status}` };
+  }
+
+  // Phase 6: Final review
+  if (codeReview) {
+    if (codeReview.status === 'needs_changes') {
+      const criticalCount = (codeReview.findings || []).filter(f => f.severity === 'critical').length;
+      const majorCount = (codeReview.findings || []).filter(f => f.severity === 'major').length;
+      return {
+        phase: 'Phase 6: Final Review',
+        detail: `Status: needs_changes | ${criticalCount} critical, ${majorCount} major findings. Launch implementer to fix.`
+      };
+    }
+    return { phase: 'Phase 6: Final Review', detail: `Status: ${codeReview.status}` };
+  }
+
+  // Phase 5: Implementation (check for impl-result or step artifacts)
+  if (implResult) {
+    return { phase: 'Phase 5: Implementation Complete', detail: `Status: ${implResult.status} | ${implResult.total_steps || '?'} steps` };
+  }
+
+  if (stepResults.length > 0 || stepReviews.length > 0) {
+    const maxResultStep = stepResults.length > 0 ? Math.max(...stepResults.map(s => s.step)) : 0;
+    const maxReviewStep = stepReviews.length > 0 ? Math.max(...stepReviews.map(s => s.step)) : 0;
+
+    // Check if the latest step review needs changes
+    if (maxReviewStep > 0) {
+      const latestReview = stepReviews.find(s => s.step === maxReviewStep);
+      if (latestReview && latestReview.data && latestReview.data.status === 'needs_changes') {
+        return {
+          phase: `Phase 5b: Reviewing Step ${maxReviewStep}`,
+          detail: `Step ${maxReviewStep} needs fixes. Re-launch implementer with fix_findings.`
+        };
+      }
+    }
+
+    if (maxResultStep > maxReviewStep) {
+      return {
+        phase: `Phase 5b: Reviewing Step ${maxResultStep}`,
+        detail: `Step ${maxResultStep} implemented, awaiting review.`
+      };
+    }
+
+    // Latest review done, next step implementation
+    const nextStep = maxReviewStep + 1;
+    return {
+      phase: `Phase 5a: Implementing Step ${nextStep}`,
+      detail: `${maxReviewStep} steps reviewed so far.`
+    };
+  }
+
+  // Phase 3/4: Plan revision / user review
+  if (planReview) {
+    if (planReview.status === 'needs_changes') {
+      return { phase: 'Phase 3: Plan Revision', detail: 'Plan review returned needs_changes. Analyzer should revise.' };
+    }
+    if (planReview.status === 'needs_clarification') {
+      return { phase: 'Phase 3: Clarification Needed', detail: 'Plan review needs clarification. Ask user via AskUserQuestion.' };
+    }
+    if (planReview.status === 'approved') {
+      return { phase: 'Phase 4: User Review', detail: 'Plan approved by Codex. Waiting for user approval at .task/plan.md' };
+    }
+    if (planReview.status === 'rejected') {
+      return { phase: 'Phase 2: Plan Rejected', detail: 'Plan was rejected by review. Escalate to user.' };
+    }
+    return { phase: 'Phase 2: Plan Review', detail: `Review status: ${planReview.status}` };
+  }
+
+  // Phase 2: Plan exists but no review yet
+  if (planMd && planJson) {
+    return { phase: 'Phase 2: Plan Review', detail: 'Plan created, awaiting Codex review.' };
+  }
+
+  // Phase 1: No plan yet
+  if (!planMd && !planJson) {
+    return { phase: 'Phase 1: Analyzing', detail: 'No plan artifacts yet. Analyzer should be running.' };
+  }
+
+  // Partial plan
+  return { phase: 'Phase 1: Analyzing', detail: 'Plan partially created. Waiting for analyzer to finish.' };
+}
+
 function computeGuidance() {
   const projectDir = getProjectDir();
   const taskDir = path.join(projectDir, '.task');
@@ -39,110 +156,25 @@ function computeGuidance() {
     return null;
   }
 
-  const state = readJsonSafe(path.join(taskDir, 'state.json'));
-  if (!state || state.phase === 'idle') {
-    return null;
-  }
-
-  const planExists = fileExists(path.join(taskDir, 'plan.md'));
-  const planJsonExists = fileExists(path.join(taskDir, 'plan.json'));
-  const planReviewExists = fileExists(path.join(taskDir, 'plan-review.json'));
-  const implResultExists = fileExists(path.join(taskDir, 'impl-result.json'));
-  const codeReviewExists = fileExists(path.join(taskDir, 'code-review.json'));
-  const uiReviewExists = fileExists(path.join(taskDir, 'ui-review.json'));
-
-  const planReview = planReviewExists ? readJsonSafe(path.join(taskDir, 'plan-review.json')) : null;
-  const codeReview = codeReviewExists ? readJsonSafe(path.join(taskDir, 'code-review.json')) : null;
-  const implResult = implResultExists ? readJsonSafe(path.join(taskDir, 'impl-result.json')) : null;
-  const uiReview = uiReviewExists ? readJsonSafe(path.join(taskDir, 'ui-review.json')) : null;
-
+  const detected = detectPhase(taskDir);
   const messages = [];
 
-  const stepInfo = state.current_step && state.total_steps
-    ? ` | Step: ${state.current_step}/${state.total_steps}`
-    : '';
-  messages.push(`[PIPELINE] Current phase: ${state.phase} | Iteration: ${state.iteration}${stepInfo}`);
-
-  // Extract step number from dynamic phase names like "implementing_step_2" or "reviewing_step_3"
-  const implStepMatch = state.phase.match(/^implementing_step_(\d+)$/);
-  const reviewStepMatch = state.phase.match(/^reviewing_step_(\d+)$/);
-
-  if (implStepMatch) {
-    const stepN = implStepMatch[1];
-    messages.push(`[PIPELINE] Phase 5a: Implementer is executing step ${stepN} of ${state.total_steps || '?'}.`);
-    const stepResult = readJsonSafe(path.join(taskDir, `step-${stepN}-result.json`));
-    if (stepResult) {
-      messages.push(`[PIPELINE] Step ${stepN} status: ${stepResult.status}`);
-      if (stepResult.status === 'partial') {
-        messages.push(`[PIPELINE] Blocked: ${stepResult.blocked_reason}`);
-      }
-    }
-  } else if (reviewStepMatch) {
-    const stepN = reviewStepMatch[1];
-    messages.push(`[PIPELINE] Phase 5b: Codex is reviewing step ${stepN} of ${state.total_steps || '?'}.`);
-    const stepReview = readJsonSafe(path.join(taskDir, `step-${stepN}-review.json`));
-    if (stepReview) {
-      messages.push(`[PIPELINE] Step ${stepN} review status: ${stepReview.status}`);
-      if (stepReview.status === 'needs_changes') {
-        messages.push(`[PIPELINE] Step ${stepN} needs fixes. Re-launch implementer with step_id: ${stepN}.`);
-      }
-    }
-  } else {
-    switch (state.phase) {
-      case 'analyzing':
-        messages.push('[PIPELINE] Phase 1: Analyzer agent should be creating the plan.');
-        if (!planExists) {
-          messages.push('[PIPELINE] Waiting for .task/plan.md and .task/plan.json to be created.');
-        }
-        break;
-
-      case 'plan_review':
-        messages.push('[PIPELINE] Phase 2: Plan is being reviewed by Codex.');
-        if (planReview) {
-          messages.push(`[PIPELINE] Review status: ${planReview.status}`);
-          if (planReview.status === 'needs_changes') {
-            messages.push('[PIPELINE] Plan needs revision. Launch analyzer agent with review findings.');
-          }
-        }
-        break;
-
-      case 'plan_revision':
-        messages.push('[PIPELINE] Phase 3: Analyzer is revising the plan based on review feedback.');
-        break;
-
-      case 'user_review':
-        messages.push('[PIPELINE] Phase 4: Waiting for user to review and approve .task/plan.md');
-        messages.push('[PIPELINE] Use AskUserQuestion to confirm approval.');
-        break;
-
-      case 'final_review':
-        messages.push('[PIPELINE] Phase 6: Final code review — Codex is reviewing all changes.');
-        if (codeReview) {
-          messages.push(`[PIPELINE] Final review status: ${codeReview.status}`);
-          if (codeReview.status === 'needs_changes') {
-            const criticalCount = (codeReview.findings || []).filter(f => f.severity === 'critical').length;
-            const majorCount = (codeReview.findings || []).filter(f => f.severity === 'major').length;
-            messages.push(`[PIPELINE] Findings: ${criticalCount} critical, ${majorCount} major. Launch implementer to fix.`);
-          }
-        }
-        break;
-
-      case 'ui_verification':
-        messages.push('[PIPELINE] Phase 7: UI is being verified with Playwright.');
-        if (uiReview) {
-          messages.push(`[PIPELINE] UI review status: ${uiReview.status}`);
-        }
-        break;
-
-      case 'complete':
-        messages.push('[PIPELINE] Pipeline complete! All phases passed.');
-        break;
-
-      case 'failed':
-        messages.push('[PIPELINE] Pipeline failed. Check .task/ artifacts for details.');
-        break;
-    }
+  messages.push(`[PIPELINE] ${detected.phase}`);
+  if (detected.detail) {
+    messages.push(`[PIPELINE] ${detected.detail}`);
   }
+
+  // Also include state.json info if available (supplementary, not primary)
+  const state = readJsonSafe(path.join(taskDir, 'state.json'));
+  if (state && state.phase) {
+    const stepInfo = state.current_step && state.total_steps
+      ? ` | Step: ${state.current_step}/${state.total_steps}`
+      : '';
+    messages.push(`[PIPELINE] State: ${state.phase} | Iteration: ${state.iteration || 0}${stepInfo}`);
+  }
+
+  // Main Loop reminder
+  messages.push('[PIPELINE] Use Main Loop: TaskList() → find unblocked pending task → execute → complete → repeat.');
 
   return messages.join('\n');
 }
