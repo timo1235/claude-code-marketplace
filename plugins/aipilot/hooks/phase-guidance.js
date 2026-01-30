@@ -152,8 +152,23 @@ function computeGuidance() {
   const projectDir = getProjectDir();
   const taskDir = path.join(projectDir, '.task');
 
+  // Fix 3: Provide initialization guidance when .task/ is missing
   if (!fileExists(taskDir)) {
-    return null;
+    return [
+      '[PIPELINE] Not initialized: .task/ directory missing.',
+      '[PIPELINE] Run Initialization: reset pipeline, preflight check, create task chain, write pipeline-tasks.json + state.json.',
+      '[PIPELINE] Do NOT call Task() until .task/pipeline-tasks.json exists.'
+    ].join('\n');
+  }
+
+  // Check for pipeline-tasks.json gating artifact
+  const pipelineTasks = readJsonSafe(path.join(taskDir, 'pipeline-tasks.json'));
+  if (!pipelineTasks) {
+    return [
+      '[PIPELINE] Missing .task/pipeline-tasks.json — initialization incomplete.',
+      '[PIPELINE] Complete initialization: create task chain with TaskCreate, then write pipeline-tasks.json with task IDs.',
+      '[PIPELINE] Do NOT call Task() until pipeline-tasks.json exists.'
+    ].join('\n');
   }
 
   const detected = detectPhase(taskDir);

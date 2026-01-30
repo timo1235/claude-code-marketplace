@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # PreToolUse hook for Task tool:
-# 1. Blocks aipilot agents if pipeline is not initialized (.task/state.json missing)
+# 1. Blocks aipilot agents if pipeline-tasks.json is missing (initialization not complete)
 # 2. Blocks plan-reviewer/code-reviewer from being launched as Task subagents
 # 3. Ensures Opus agents use the correct model
 #
@@ -11,19 +11,15 @@ set -euo pipefail
 
 INPUT=$(cat)
 
-# Extract subagent_type from the tool input
-SUBAGENT_TYPE=$(echo "$INPUT" | node -e "
+# Extract subagent_type and model from the tool input (single node call)
+PARSED=$(echo "$INPUT" | node -e "
   const data = JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8'));
   const input = data.tool_input || {};
-  console.log(input.subagent_type || '');
-" 2>/dev/null || echo "")
+  console.log((input.subagent_type || '') + '\n' + (input.model || ''));
+" 2>/dev/null || echo -e "\n")
 
-# Extract model from the tool input
-MODEL=$(echo "$INPUT" | node -e "
-  const data = JSON.parse(require('fs').readFileSync('/dev/stdin', 'utf8'));
-  const input = data.tool_input || {};
-  console.log(input.model || '');
-" 2>/dev/null || echo "")
+SUBAGENT_TYPE=$(echo "$PARSED" | head -1)
+MODEL=$(echo "$PARSED" | tail -1)
 
 # Check if this is an aipilot agent
 IS_AIPILOT=false
@@ -36,12 +32,27 @@ for agent in $AIPILOT_AGENTS; do
 done
 
 # Block aipilot agents if pipeline is not initialized
+# Gate on pipeline-tasks.json (created during Step 5 of initialization)
 if [ "$IS_AIPILOT" = true ]; then
   PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
-  STATE_FILE="$PROJECT_DIR/.task/state.json"
+  PIPELINE_TASKS="$PROJECT_DIR/.task/pipeline-tasks.json"
 
-  if [ ! -f "$STATE_FILE" ]; then
-    echo "{\"decision\": \"block\", \"reason\": \"AIPilot agents cannot be launched directly. Start the pipeline first using Skill(\\\"aipilot:pipeline\\\"). The pipeline skill handles initialization, Codex preflight check, and agent orchestration.\"}"
+  if [ ! -f "$PIPELINE_TASKS" ]; then
+    echo "{\"decision\": \"block\", \"reason\": \"Pipeline not initialized: .task/pipeline-tasks.json missing. Complete ALL initialization steps first (reset, preflight, task chain, write pipeline-tasks.json). Use Skill(\\\"aipilot:pipeline\\\") to start properly.\"}"
+    exit 0
+  fi
+
+  # Validate pipeline-tasks.json has required keys
+  VALID=$(node -e "
+    try {
+      const j = JSON.parse(require('fs').readFileSync('$PIPELINE_TASKS', 'utf8'));
+      const ok = j.phase1 && j.phase2 && j.phase3 && j.phase4;
+      console.log(ok ? 'yes' : 'no');
+    } catch { console.log('no'); }
+  " 2>/dev/null || echo "no")
+
+  if [ "$VALID" != "yes" ]; then
+    echo "{\"decision\": \"block\", \"reason\": \"pipeline-tasks.json is incomplete — missing required phase keys. Re-run initialization to create the full task chain.\"}"
     exit 0
   fi
 fi

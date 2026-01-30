@@ -63,7 +63,9 @@ cmd_reset() {
   echo "Resetting pipeline artifacts in $TASK_DIR ..."
 
   if [ ! -d "$TASK_DIR" ]; then
-    echo "No .task/ directory found. Nothing to reset."
+    echo "No .task/ directory found. Creating it."
+    mkdir -p "$TASK_DIR"
+    echo "Pipeline reset complete. Ready for initialization."
     exit 0
   fi
 

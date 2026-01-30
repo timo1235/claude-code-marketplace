@@ -33,3 +33,6 @@ node_modules/
 
 # BATS testing framework
 .bats/
+
+# Reference plugins (cloned for analysis)
+reference/
