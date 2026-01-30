@@ -5,7 +5,7 @@ A collection of plugins for [Claude Code](https://docs.anthropic.com/en/docs/cla
 ## Marketplace zum Claude Code hinzufuegen
 
 ```bash
-claude plugin add-marketplace timo1235/claude-code-marketplace
+claude plugin marketplace add timo1235/claude-code-marketplace
 ```
 
 ## Verfuegbare Plugins
