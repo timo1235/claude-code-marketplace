@@ -116,18 +116,35 @@ Task({
 ### Running a Codex Review (Bash tool)
 
 Use the `Bash` tool to run the codex-review.js script. Resolve paths as follows:
-- **Plugin root**: Use the directory where this skill file lives, two levels up (the plugin root containing `scripts/`)
-- **Project directory**: Use the current working directory or `process.env.CLAUDE_PROJECT_DIR`
+- **Plugin root (`<PLUGIN_ROOT>`)**: The aipilot plugin directory (contains `scripts/`, `docs/`, `skills/`)
+- **Project directory (`<PROJECT_DIR>`)**: The current working directory or `process.env.CLAUDE_PROJECT_DIR`
 
-```
-Bash("node /path/to/plugin/scripts/codex-review.js --type plan --project-dir /path/to/project")
-```
-
-To find the plugin scripts directory, first run:
+To find the plugin root, first run:
 ```
 Bash("find / -path '*/aipilot/scripts/codex-review.js' -type f 2>/dev/null | head -1")
 ```
-Cache this path for all subsequent Codex calls in the session.
+Strip `/scripts/codex-review.js` from the result to get `<PLUGIN_ROOT>`. Cache both paths for the session.
+
+**Standard call format:**
+```
+Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type plan --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR>")
+```
+
+**With `--resume` for fix iterations (re-reviews after fixes):**
+```
+Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type step-review --step-id N --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR> --resume")
+```
+
+**With `--changes-summary` for focused re-reviews:**
+```
+Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type step-review --step-id N --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR> --resume --changes-summary 'Fixed XSS in input handler, added validation'")
+```
+
+**Exit codes:**
+- `0` = success (review JSON written and validated)
+- `1` = validation error (output did not pass schema checks)
+- `2` = Codex error (CLI failed)
+- `3` = timeout
 
 </agent_launch_templates>
 
@@ -138,10 +155,10 @@ When the user invokes this skill:
 1. **Ask for the task description** if not already provided
 2. **Codex Preflight Check** — Run BEFORE anything else:
    ```
-   Bash("node <SCRIPT_PATH>/codex-review.js --type preflight")
+   Bash("node <PLUGIN_ROOT>/scripts/codex-review.js --type preflight")
    ```
-   - If stdout contains `"ok": true` → continue
-   - If it fails (exit code 1 or `"ok": false`) → **ABORT the pipeline immediately**. Tell the user: "Codex CLI is not available. The pipeline requires Codex for code reviews. Please install Codex and try again."
+   - If exit code 0 and stdout contains `"ok": true` → continue
+   - If exit code 2 or stdout contains `"error"` → **ABORT the pipeline immediately**. Tell the user: "Codex CLI is not available. The pipeline requires Codex for code reviews. Please install Codex and try again."
    - Do NOT proceed to any phase if preflight fails.
 3. **Initialize the pipeline:**
    - Copy `.task.template/state.json` to project `.task/state.json` (create `.task/` if needed)
@@ -182,14 +199,16 @@ Store all task IDs in `.task/pipeline-tasks.json` for reference.
 - **→ IMMEDIATELY proceed to Phase 2. Do NOT stop here.**
 
 ### Phase 2: Plan Review
-- Run Codex CLI via `Bash` tool (use the cached script path from startup):
+- Run Codex CLI via `Bash` tool (use the cached plugin root from startup):
   ```
-  node <SCRIPT_PATH>/codex-review.js --type plan --project-dir <PROJECT_DIR>
+  node <PLUGIN_ROOT>/scripts/codex-review.js --type plan --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR>
   ```
 - Codex reads `.task/plan.md` and `.task/plan.json`, writes `.task/plan-review.json`
 - Read `.task/plan-review.json` to check result
-- If `status: "needs_changes"` → **immediately** proceed to Phase 3
 - If `status: "approved"` → skip Phase 3, **immediately** go to Phase 4
+- If `status: "needs_changes"` → **immediately** proceed to Phase 3
+- If `status: "needs_clarification"` → read `clarification_questions` array, use `AskUserQuestion` to ask the user, then write answers to `.task/user-plan-feedback.json` and re-run Phase 3 → Phase 2
+- If `status: "rejected"` → escalate to user immediately
 
 ### Phase 3: Plan Revision
 - Launch `analyzer` agent again with `<task_description>` (original task) and `<review_findings>` (from plan-review.json)
@@ -230,13 +249,13 @@ After plan approval, read `.task/plan.json` to get `total_steps`. Update state w
 3. **5b: Review Step N**
    - Run Codex CLI via `Bash` tool:
      ```
-     node <SCRIPT_PATH>/codex-review.js --type step-review --step-id N --project-dir <PROJECT_DIR>
+     node <PLUGIN_ROOT>/scripts/codex-review.js --type step-review --step-id N --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR>
      ```
    - Codex reviews ONLY changes from step N, verifies step completeness
    - Codex writes `.task/step-N-review.json`
 4. **Handle review result:**
    - If `status: "approved"` → proceed to step N+1
-   - If `status: "needs_changes"` → re-launch implementer with `<step_id>N</step_id>` and `<fix_findings>` from step-N-review.json, then re-review. Max 3 fix iterations per step.
+   - If `status: "needs_changes"` → re-launch implementer with `<step_id>N</step_id>` and `<fix_findings>` from step-N-review.json, then re-review with `--resume` and `--changes-summary`. Max 3 fix iterations per step.
    - If `status: "rejected"` → escalate to user immediately (fundamental problem with this step)
    - If max iterations exhausted → escalate to user
 
@@ -254,7 +273,7 @@ After ALL steps complete, write `.task/impl-result.json` as a summary combining 
 ### Phase 6: Final Code Review
 - Run Codex CLI via `Bash` tool:
   ```
-  node <SCRIPT_PATH>/codex-review.js --type final-review --project-dir <PROJECT_DIR>
+  node <PLUGIN_ROOT>/scripts/codex-review.js --type final-review --plugin-root <PLUGIN_ROOT> --project-dir <PROJECT_DIR>
   ```
 - Codex reviews ALL changes across all steps, verifies overall completeness against the full plan
 - Codex writes `.task/code-review.json`

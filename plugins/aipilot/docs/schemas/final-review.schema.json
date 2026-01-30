@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "final-review.schema.json",
+  "title": "Final Review",
+  "description": "Schema for Codex final review output (.task/code-review.json)",
+  "type": "object",
+  "required": ["status", "summary", "plan_adherence", "findings", "tests_review", "checklist"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["approved", "needs_changes", "rejected"],
+      "description": "Overall review verdict"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 10,
+      "description": "One-paragraph overall assessment"
+    },
+    "plan_adherence": {
+      "type": "object",
+      "required": ["steps_verified", "deviations"],
+      "properties": {
+        "steps_verified": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["step_id", "implemented", "correct"],
+            "properties": {
+              "step_id": { "type": "integer" },
+              "implemented": { "type": "boolean" },
+              "correct": { "type": "boolean" },
+              "notes": { "type": "string" }
+            }
+          }
+        },
+        "deviations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Any deviations from the approved plan"
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "category", "description", "recommendation"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor", "suggestion"]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "bug", "security", "error-handling", "resource-management",
+              "performance", "code-quality", "concurrency", "testing",
+              "dead-code", "over-engineering", "logging", "api-design",
+              "backward-compat", "dependencies"
+            ]
+          },
+          "file": {
+            "type": "string",
+            "description": "Relative file path"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Line number (0 if not applicable)"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "tests_review": {
+      "type": "object",
+      "required": ["coverage_adequate", "missing_tests", "test_quality"],
+      "properties": {
+        "coverage_adequate": {
+          "type": "boolean"
+        },
+        "missing_tests": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "test_quality": {
+          "type": "string",
+          "description": "Assessment of test quality"
+        }
+      }
+    },
+    "checklist": {
+      "type": "object",
+      "description": "12-point standards checklist results",
+      "required": [
+        "security", "error_handling", "resource_management", "configuration",
+        "code_quality", "concurrency", "logging", "dependencies",
+        "api_design", "backward_compat", "testing", "over_engineering"
+      ],
+      "properties": {
+        "security": { "$ref": "#/$defs/checklistItem" },
+        "error_handling": { "$ref": "#/$defs/checklistItem" },
+        "resource_management": { "$ref": "#/$defs/checklistItem" },
+        "configuration": { "$ref": "#/$defs/checklistItem" },
+        "code_quality": { "$ref": "#/$defs/checklistItem" },
+        "concurrency": { "$ref": "#/$defs/checklistItem" },
+        "logging": { "$ref": "#/$defs/checklistItem" },
+        "dependencies": { "$ref": "#/$defs/checklistItem" },
+        "api_design": { "$ref": "#/$defs/checklistItem" },
+        "backward_compat": { "$ref": "#/$defs/checklistItem" },
+        "testing": { "$ref": "#/$defs/checklistItem" },
+        "over_engineering": { "$ref": "#/$defs/checklistItem" }
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "description": "What must change before approval (empty string if approved)"
+    }
+  },
+  "$defs": {
+    "checklistItem": {
+      "type": "object",
+      "required": ["pass", "notes"],
+      "properties": {
+        "pass": {
+          "type": "boolean",
+          "description": "Whether this category passes review"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Brief notes on this category"
+        }
+      }
+    }
+  }
+}

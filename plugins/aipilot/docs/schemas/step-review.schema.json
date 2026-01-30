@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "step-review.schema.json",
+  "title": "Step Review",
+  "description": "Schema for per-step Codex review output (.task/step-N-review.json)",
+  "type": "object",
+  "required": ["step_id", "status", "summary", "step_adherence", "findings"],
+  "properties": {
+    "step_id": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The step number being reviewed"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["approved", "needs_changes", "rejected"],
+      "description": "Step review verdict"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 10,
+      "description": "One-paragraph assessment of this step"
+    },
+    "step_adherence": {
+      "type": "object",
+      "required": ["implemented", "correct"],
+      "properties": {
+        "implemented": {
+          "type": "boolean",
+          "description": "Was everything in this step implemented?"
+        },
+        "correct": {
+          "type": "boolean",
+          "description": "Is the implementation correct?"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Additional adherence notes"
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "category", "description", "recommendation"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor", "suggestion"]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "bug", "security", "error-handling", "resource-management",
+              "performance", "code-quality", "concurrency", "testing",
+              "dead-code", "over-engineering", "logging", "api-design"
+            ]
+          },
+          "file": {
+            "type": "string",
+            "description": "Relative file path"
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Line number (0 if not applicable)"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "verdict": {
+      "type": "string",
+      "description": "What must change before approval (empty string if approved)"
+    }
+  }
+}

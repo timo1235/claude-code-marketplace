@@ -5,6 +5,12 @@
  *
  * Runs when any subagent finishes. Checks if review artifacts exist and
  * are properly structured. Can BLOCK if reviews are invalid.
+ *
+ * Validates against the JSON schemas in docs/schemas/ and enforces:
+ * - Valid JSON with required fields
+ * - Valid status values (including needs_clarification for plan reviews)
+ * - Required type-specific fields (summary, findings, etc.)
+ * - Checklist presence in final reviews
  */
 
 const fs = require('fs');
@@ -50,10 +56,17 @@ function validatePlanReview(taskDir) {
     return { decision: 'block', reason: 'plan-review.json exists but is not valid JSON.' };
   }
 
-  if (!['approved', 'needs_changes', 'rejected'].includes(review.status)) {
+  if (!['approved', 'needs_changes', 'needs_clarification', 'rejected'].includes(review.status)) {
     return {
       decision: 'block',
-      reason: `plan-review.json has invalid status: "${review.status}". Must be "approved", "needs_changes", or "rejected".`
+      reason: `plan-review.json has invalid status: "${review.status}". Must be "approved", "needs_changes", "needs_clarification", or "rejected".`
+    };
+  }
+
+  if (!review.summary || typeof review.summary !== 'string') {
+    return {
+      decision: 'block',
+      reason: 'plan-review.json is missing "summary" string field.'
     };
   }
 
@@ -69,6 +82,16 @@ function validatePlanReview(taskDir) {
       decision: 'block',
       reason: 'plan-review.json is missing "requirements_coverage" section.'
     };
+  }
+
+  // needs_clarification requires clarification_questions
+  if (review.status === 'needs_clarification') {
+    if (!review.clarification_questions || !Array.isArray(review.clarification_questions) || review.clarification_questions.length === 0) {
+      return {
+        decision: 'block',
+        reason: 'plan-review.json has status "needs_clarification" but missing or empty "clarification_questions" array.'
+      };
+    }
   }
 
   return null; // Valid
@@ -92,6 +115,13 @@ function validateCodeReview(taskDir) {
     };
   }
 
+  if (!review.summary || typeof review.summary !== 'string') {
+    return {
+      decision: 'block',
+      reason: 'code-review.json is missing "summary" string field.'
+    };
+  }
+
   if (!review.findings || !Array.isArray(review.findings)) {
     return {
       decision: 'block',
@@ -103,6 +133,20 @@ function validateCodeReview(taskDir) {
     return {
       decision: 'block',
       reason: 'code-review.json is missing "plan_adherence" section.'
+    };
+  }
+
+  if (!review.tests_review) {
+    return {
+      decision: 'block',
+      reason: 'code-review.json is missing "tests_review" section.'
+    };
+  }
+
+  if (!review.checklist) {
+    return {
+      decision: 'block',
+      reason: 'code-review.json is missing "checklist" section (12-point standards checklist).'
     };
   }
 
@@ -144,10 +188,10 @@ function validateStepReview(taskDir, stepFile) {
     return { decision: 'block', reason: `${stepFile} exists but is not valid JSON.` };
   }
 
-  if (!['approved', 'needs_changes'].includes(review.status)) {
+  if (!['approved', 'needs_changes', 'rejected'].includes(review.status)) {
     return {
       decision: 'block',
-      reason: `${stepFile} has invalid status: "${review.status}". Must be "approved" or "needs_changes".`
+      reason: `${stepFile} has invalid status: "${review.status}". Must be "approved", "needs_changes", or "rejected".`
     };
   }
 
@@ -155,6 +199,27 @@ function validateStepReview(taskDir, stepFile) {
     return {
       decision: 'block',
       reason: `${stepFile} is missing "step_id" number field.`
+    };
+  }
+
+  if (!review.summary || typeof review.summary !== 'string') {
+    return {
+      decision: 'block',
+      reason: `${stepFile} is missing "summary" string field.`
+    };
+  }
+
+  if (!review.step_adherence) {
+    return {
+      decision: 'block',
+      reason: `${stepFile} is missing "step_adherence" section.`
+    };
+  }
+
+  if (!Array.isArray(review.findings)) {
+    return {
+      decision: 'block',
+      reason: `${stepFile} is missing "findings" array.`
     };
   }
 

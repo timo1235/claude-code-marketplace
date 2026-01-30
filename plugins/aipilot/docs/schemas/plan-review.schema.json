@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "plan-review.schema.json",
+  "title": "Plan Review",
+  "description": "Schema for Codex plan review output (.task/plan-review.json)",
+  "type": "object",
+  "required": ["status", "summary", "findings", "requirements_coverage"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["approved", "needs_changes", "needs_clarification", "rejected"],
+      "description": "Overall plan assessment"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 10,
+      "description": "One-paragraph overall assessment"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "category", "description", "recommendation"],
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor", "suggestion"]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "security", "error-handling", "resource-management", "configuration",
+              "code-quality", "concurrency", "logging", "dependencies",
+              "api-design", "backward-compat", "testing", "over-engineering",
+              "completeness", "feasibility", "ordering"
+            ]
+          },
+          "step_id": {
+            "type": "integer",
+            "description": "Which plan step this finding relates to (optional)"
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "recommendation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "requirements_coverage": {
+      "type": "object",
+      "required": ["fully_covered", "partially_covered", "missing"],
+      "properties": {
+        "fully_covered": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "partially_covered": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "missing": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "needs_clarification": {
+      "type": "boolean",
+      "description": "True if reviewer needs clarification from user before proceeding"
+    },
+    "clarification_questions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Questions for the user (only when needs_clarification is true)"
+    },
+    "verdict": {
+      "type": "string",
+      "description": "What must change before approval (empty string if approved)"
+    }
+  },
+  "if": {
+    "properties": { "status": { "const": "needs_clarification" } }
+  },
+  "then": {
+    "required": ["status", "summary", "findings", "requirements_coverage", "needs_clarification", "clarification_questions"]
+  }
+}
