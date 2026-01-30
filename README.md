@@ -4,11 +4,19 @@ A collection of plugins for [Claude Code](https://docs.anthropic.com/en/docs/cla
 
 ## Installation
 
+Innerhalb einer Claude Code Session:
+
+```
+/plugin marketplace add timo1235/claude-code-marketplace
+```
+
+Oder im Terminal:
+
 ```bash
 claude plugin marketplace add timo1235/claude-code-marketplace
 ```
 
-Danach Plugins installieren ueber `/plugins` in einer Claude Code Session.
+Danach Plugins durchsuchen und installieren mit `/plugin`.
 
 ## Verfuegbare Plugins
 
