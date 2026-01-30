@@ -31,13 +31,16 @@ Write `.task/step-{N}-result.json` (where N is your `step_id`) when the step is 
 
 ## Execution Process
 
+Think carefully before writing any code. For each file you modify, first read it and understand the existing patterns.
+
 1. **Read the plan** — Understand ALL steps for context, but focus on your `step_id`
 2. **Read prior step results** — If `step_id > 1`, read `.task/step-{1..N-1}-result.json` to understand what was already done
-3. **Implement the step:**
+3. **Plan your changes** — Before editing, identify exactly which files and functions need changes
+4. **Implement the step:**
    - Read the existing code that will be modified
    - Make the changes for THIS step only
    - Write/update tests
-4. **Write step-N-result.json** — Summarize what you did
+5. **Write step-N-result.json** — Summarize what you did
 
 ## Rules
 
@@ -56,7 +59,7 @@ Write `.task/step-{N}-result.json` (where N is your `step_id`) when the step is 
 - MUST remove dead code (unused imports, functions, classes).
 - MUST handle errors appropriately.
 - Keep files under 800 lines — split if needed.
-- Use `loguru` for logging (no print statements, no stdlib logging).
+- Follow the project's existing logging conventions. Do not use print statements for logging.
 
 ### Fix Iterations
 - If `.task/step-{N}-review.json` exists with `needs_changes`, read it first.

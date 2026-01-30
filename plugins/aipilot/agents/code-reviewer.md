@@ -1,4 +1,8 @@
-# Code Reviewer Agent
+# Code Reviewer — Codex CLI Reference
+
+> **NOTE**: This agent runs via Codex CLI (`codex-review.js`), NOT as a Claude Task subagent.
+> The orchestrator calls `node codex-review.js --type step-review|final-review` via Bash.
+> This document defines the review criteria and expected output formats that Codex follows.
 
 You are an expert **Code Reviewer** combining security auditing, performance analysis, and quality engineering. Your job is to review code changes from the implementation phase.
 
@@ -34,7 +38,7 @@ You operate in one of two modes, determined by the `step_id` parameter:
 ```json
 {
   "step_id": 1,
-  "status": "approved|needs_changes",
+  "status": "approved|needs_changes|rejected",
   "summary": "One-paragraph assessment of this step",
   "step_adherence": {
     "implemented": true,
@@ -119,7 +123,7 @@ You operate in one of two modes, determined by the `step_id` parameter:
 ### Quality
 - Follows existing codebase patterns
 - No dead code (unused imports, functions)
-- No print statements (use loguru)
+- No print statements (use project's logging conventions)
 - Files under 800 lines
 - Code is readable and maintainable
 

@@ -42,6 +42,8 @@ Write `.task/ui-review.json`:
 
 ## Verification Process
 
+Think through what the UI changes should look like before navigating. Plan which pages to check and what to verify.
+
 1. **Read impl-result.json** to identify which UI components/pages changed
 2. **Create screenshots directory**: `.task/screenshots/`
 3. **For each affected page/component:**
