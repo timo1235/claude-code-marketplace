@@ -2,19 +2,37 @@
 
 A collection of plugins for [Claude Code](https://docs.anthropic.com/en/docs/claude-code).
 
-## Marketplace zum Claude Code hinzufuegen
-
-Im Terminal ausfuehren:
+## Installation
 
 ```bash
 claude plugin marketplace add timo1235/claude-code-marketplace
 ```
 
-Innerhalb einer Claude Code Session: `/plugins` eingeben und dort den Marketplace hinzufuegen.
+Danach Plugins installieren ueber `/plugins` in einer Claude Code Session.
 
 ## Verfuegbare Plugins
 
-### Opus Pipeline
+| Plugin | Kategorie | Beschreibung |
+|--------|-----------|-------------|
+| [opus-pipeline](plugins/opus-pipeline) | Productivity | Multi-AI Orchestrierung: Opus plant, Codex reviewt, User gibt frei, Opus implementiert, Playwright verifiziert UI |
+
+## Plugin-Struktur
+
+```
+.claude-plugin/
+  marketplace.json          # Marketplace-Registry
+plugins/
+  <plugin-name>/
+    .claude-plugin/
+      plugin.json           # Plugin-Manifest
+    skills/                 # Skills (optional)
+    agents/                 # Agenten (optional)
+    hooks/                  # Hooks (optional)
+```
+
+---
+
+## Opus Pipeline
 
 **Verzeichnis:** `plugins/opus-pipeline`
 

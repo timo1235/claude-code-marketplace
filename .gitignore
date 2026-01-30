@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Archives
+*.zip
+
+# Temp
+tmp/
+temp/
+
+# Claude Code local settings
+.claude/
+
+# Logs
+*.log
+
+# Build artifacts
+dist/
+build/
+out/
+
+# Node
+node_modules/
+
+# BATS testing framework
+.bats/
