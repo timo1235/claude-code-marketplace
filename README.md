@@ -4,9 +4,13 @@ A collection of plugins for [Claude Code](https://docs.anthropic.com/en/docs/cla
 
 ## Marketplace zum Claude Code hinzufuegen
 
+Im Terminal ausfuehren:
+
 ```bash
 claude plugin marketplace add timo1235/claude-code-marketplace
 ```
+
+Innerhalb einer Claude Code Session: `/plugins` eingeben und dort den Marketplace hinzufuegen.
 
 ## Verfuegbare Plugins
 
