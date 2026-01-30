@@ -1,12 +1,20 @@
 {
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "timo1235-marketplace",
-  "description": "Timo's Claude Code Plugin Marketplace",
+  "owner": {
+    "name": "Timo",
+    "url": "https://github.com/timo1235"
+  },
+  "metadata": {
+    "description": "Timo's Claude Code Plugin Marketplace",
+    "version": "1.0.0",
+    "pluginRoot": "./plugins"
+  },
   "plugins": [
     {
       "name": "opus-pipeline",
-      "path": "plugins/opus-pipeline",
-      "description": "Multi-AI orchestration pipeline: Opus plans, Codex reviews, User approves, Opus implements, Playwright verifies UI",
-      "version": "1.0.0"
+      "source": "./plugins/opus-pipeline",
+      "category": "productivity"
     }
   ]
 }
