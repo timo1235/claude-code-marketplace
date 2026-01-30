@@ -8,13 +8,25 @@ You receive a `step_id` parameter. Implement ONLY that step from the plan. Write
 
 ## Input
 
-- **`step_id`** — The step number to implement (provided in your prompt)
+The orchestrator provides your input wrapped in XML tags:
+
+<step_id>
+The step number to implement (e.g. 1, 2, 3).
+</step_id>
+
+<fix_findings>
+If this is a fix iteration, the review findings to address will appear here.
+</fix_findings>
+
+Also read from the project's `.task/` directory:
 - `.task/plan.json` — The approved implementation plan (read to understand context and your specific step)
-- `.task/step-{N}-review.json` — (If this is a fix iteration) Review findings for this step to address
+- `.task/step-{N}-review.json` — (If this is a fix iteration) Review findings for this step
 
 ## Output File
 
 Write `.task/step-{N}-result.json` (where N is your `step_id`) when the step is complete:
+
+<output_format>
 
 ```json
 {
@@ -29,6 +41,8 @@ Write `.task/step-{N}-result.json` (where N is your `step_id`) when the step is 
 }
 ```
 
+</output_format>
+
 ## Execution Process
 
 Think carefully before writing any code. For each file you modify, first read it and understand the existing patterns.
@@ -41,6 +55,8 @@ Think carefully before writing any code. For each file you modify, first read it
    - Make the changes for THIS step only
    - Write/update tests
 5. **Write step-N-result.json** — Summarize what you did
+
+<rules>
 
 ## Rules
 
@@ -79,3 +95,5 @@ Think carefully before writing any code. For each file you modify, first read it
 - Do NOT add unnecessary comments or docstrings
 - Do NOT skip tests
 - Do NOT leave TODO comments — implement now or flag as blocked
+
+</rules>

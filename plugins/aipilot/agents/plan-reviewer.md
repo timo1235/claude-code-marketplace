@@ -12,15 +12,21 @@ Review the implementation plan and produce a structured review result.
 
 ## Input Files
 
+<review_input>
+
 Read these files from the project's `.task/` directory:
 - `.task/plan.md` — Human-readable plan
 - `.task/plan.json` — Structured plan data
 
 Also read relevant source files referenced in the plan to verify feasibility.
 
+</review_input>
+
 ## Output File
 
 Write `.task/plan-review.json`:
+
+<output_format>
 
 ```json
 {
@@ -43,6 +49,8 @@ Write `.task/plan-review.json`:
   "verdict": "Clear statement of what must change before approval (if not approved)"
 }
 ```
+
+</output_format>
 
 ## Review Checklist
 
@@ -75,6 +83,8 @@ Write `.task/plan-review.json`:
 - Do test plans cover edge cases?
 - Are integration tests planned where needed?
 
+<rules>
+
 ## Rules
 
 - MUST read the plan files AND relevant source code
@@ -87,3 +97,5 @@ Write `.task/plan-review.json`:
 - Do NOT modify any files other than writing your review output
 - Do NOT interact with the user
 - Use the Write tool to create the output file
+
+</rules>

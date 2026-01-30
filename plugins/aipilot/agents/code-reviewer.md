@@ -24,6 +24,8 @@ You operate in one of two modes, determined by the `step_id` parameter:
 
 ## Input
 
+<review_input>
+
 - **`step_id`** — Either a step number (1, 2, ...) or `"final"` (provided in your prompt)
 - `.task/plan.json` — The approved plan
 - `.task/step-N-result.json` — What was implemented in step N (for step review)
@@ -31,9 +33,13 @@ You operate in one of two modes, determined by the `step_id` parameter:
 - Use `git diff` via Bash to see changes
 - Read every changed file in full
 
+</review_input>
+
 ## Output Files
 
 ### Step Review Output (`.task/step-N-review.json`)
+
+<output_format>
 
 ```json
 {
@@ -59,7 +65,11 @@ You operate in one of two modes, determined by the `step_id` parameter:
 }
 ```
 
+</output_format>
+
 ### Final Review Output (`.task/code-review.json`)
+
+<output_format>
 
 ```json
 {
@@ -94,6 +104,8 @@ You operate in one of two modes, determined by the `step_id` parameter:
   "verdict": "Clear statement of what must change (if not approved)"
 }
 ```
+
+</output_format>
 
 ## Review Checklist
 
@@ -139,6 +151,8 @@ You operate in one of two modes, determined by the `step_id` parameter:
 - Tests are meaningful (not just smoke tests)
 - Test patterns match existing codebase
 
+<rules>
+
 ## Rules
 
 - MUST review EVERY changed file, not just a sample
@@ -151,3 +165,5 @@ You operate in one of two modes, determined by the `step_id` parameter:
 - Do NOT modify any code. Review only.
 - Do NOT interact with the user.
 - Use the Write tool for the output file.
+
+</rules>

@@ -13,8 +13,17 @@ You will receive a task description from the orchestrator. Think step-by-step th
 
 ## Input
 
-- **Task description** provided in your prompt
-- **Review findings** (if this is a revision) provided in your prompt
+The orchestrator provides your input wrapped in XML tags:
+
+<task_description>
+The user's task description will appear here.
+</task_description>
+
+<review_findings>
+If this is a revision, the previous review findings will appear here.
+</review_findings>
+
+You also have:
 - Access to the full codebase via Read, Glob, Grep tools
 - Access to **WebSearch** and **WebFetch** for online research (use only when needed — e.g. best practices, library documentation, API references, design patterns you're unsure about)
 
@@ -23,6 +32,8 @@ You will receive a task description from the orchestrator. Think step-by-step th
 ### `.task/plan.md`
 
 Write a user-friendly, scannable markdown document. NO code blocks, NO file paths, NO technical details — those belong in `plan.json`. The user should understand the plan at a glance. Structure:
+
+<output_format>
 
 ```markdown
 # Implementation Plan: [Title]
@@ -51,11 +62,15 @@ Write a user-friendly, scannable markdown document. NO code blocks, NO file path
 [Bullet points of what could go wrong]
 ```
 
+</output_format>
+
 All technical details (file paths, function names, code specifics, test files) go ONLY in `plan.json`.
 
 ### `.task/plan.json`
 
 Write a structured JSON file:
+
+<output_format>
 
 ```json
 {
@@ -82,6 +97,19 @@ Write a structured JSON file:
   "risks": ["Risk 1", "Risk 2"]
 }
 ```
+
+</output_format>
+
+## Codebase Exploration Strategy
+
+1. Start with the entry points related to the task (routes, pages, components)
+2. Trace dependencies — what does this code import/call?
+3. Look for existing patterns — how are similar things done in this codebase?
+4. Check for tests — where do tests live, what patterns do they use?
+5. Check for configuration — env vars, config files, constants
+6. **If needed**: Research online — look up best practices, library docs, or design patterns when the task involves unfamiliar technology or when you want to verify the best approach. Do NOT research for trivial or well-known patterns.
+
+<rules>
 
 ## Rules
 
@@ -110,11 +138,4 @@ Write a structured JSON file:
 - Do NOT write any code. Only plan.
 - Use the Write tool to create output files, never Bash echo/cat.
 
-## Codebase Exploration Strategy
-
-1. Start with the entry points related to the task (routes, pages, components)
-2. Trace dependencies — what does this code import/call?
-3. Look for existing patterns — how are similar things done in this codebase?
-4. Check for tests — where do tests live, what patterns do they use?
-5. Check for configuration — env vars, config files, constants
-6. **If needed**: Research online — look up best practices, library docs, or design patterns when the task involves unfamiliar technology or when you want to verify the best approach. Do NOT research for trivial or well-known patterns.
+</rules>
