@@ -22,7 +22,7 @@ Danach Plugins durchsuchen und installieren mit `/plugin`.
 
 | Plugin | Kategorie | Beschreibung |
 |--------|-----------|-------------|
-| [opus-pipeline](plugins/opus-pipeline) | Productivity | Multi-AI Orchestrierung: Opus plant, Codex reviewt, User gibt frei, Opus implementiert, Playwright verifiziert UI |
+| [aipilot](plugins/aipilot) | Productivity | AI-Pilot: Multi-Agent Orchestrierung mit schrittweiser Implementierung und Per-Step Code Review |
 
 ## Plugin-Struktur
 
@@ -40,11 +40,11 @@ plugins/
 
 ---
 
-## Opus Pipeline
+## AIPilot
 
-**Verzeichnis:** `plugins/opus-pipeline`
+**Verzeichnis:** `plugins/aipilot`
 
-Ein Multi-AI-Orchestrierungspipeline-Plugin, das spezialisierte KI-Agenten durch einen strukturierten 7-Phasen-Workflow koordiniert.
+Ein Multi-Agent-Orchestrierungs-Plugin, das spezialisierte KI-Agenten durch einen strukturierten 7-Phasen-Workflow mit schrittweiser Implementierung und Per-Step Code Review koordiniert.
 
 #### Ueberblick
 
@@ -63,18 +63,18 @@ Das Plugin orchestriert verschiedene KI-Modelle in spezialisierten Rollen:
 | 2. Plan Review | Codex (via CLI) | Prueft Plan auf Korrektheit, Vollstaendigkeit, Sicherheit | `.task/plan-review.json` |
 | 3. Plan Revision | Opus (Analyzer) | Ueberarbeitet Plan basierend auf Review-Ergebnissen (optional) | Aktualisierte Plan-Dateien |
 | 4. User Review | Manuell | Benutzer prueft/editiert den Plan und gibt Freigabe | - |
-| 5. Implementierung | Opus (Implementer) | Setzt Plan Schritt fuer Schritt um | Code-Aenderungen, `.task/impl-result.json` |
-| 6. Code Review | Codex (via CLI) | Prueft alle Code-Aenderungen | `.task/code-review.json` |
+| 5. Schrittweise Implementierung | Opus (Implementer) + Codex | Pro Step: Opus implementiert, Codex reviewt (Fix-Loop bei Bedarf) | `.task/step-N-result.json`, `.task/step-N-review.json` |
+| 6. Final Code Review | Codex (via CLI) | Prueft alle Aenderungen insgesamt auf Vollstaendigkeit | `.task/code-review.json` |
 | 7. UI Verifikation | Opus + Playwright | Visuelle Pruefung der UI-Aenderungen (optional) | `.task/ui-review.json`, Screenshots |
 
 #### Agenten
 
 | Agent | Modell | Aufgabe |
 |-------|--------|---------|
-| **analyzer** | Opus | Codebase-Analyse und Planerstellung |
+| **analyzer** | Opus | Codebase-Analyse und Planerstellung (1-5 Steps) |
 | **plan-reviewer** | Codex | Plan-Validierung und Risikobewertung |
-| **implementer** | Opus | Schrittweise Code-Implementierung |
-| **code-reviewer** | Codex | Code-Qualitaetspruefung und Sicherheitsaudit |
+| **implementer** | Opus | Einzelschritt-Implementierung (ein Step pro Aufruf) |
+| **code-reviewer** | Codex | Step-Review oder Final-Review (zwei Modi) |
 | **ui-verifier** | Opus + Playwright | Visuelle UI-Verifikation mit Screenshots |
 
 #### Verwendung
@@ -100,7 +100,9 @@ Das Plugin nutzt drei Hook-Typen:
 | Phase | Max. Iterationen | Bei Erschoepfung |
 |-------|-----------------|-------------------|
 | Plan Review | 3 | Eskalation an Benutzer |
-| Code Review | 3 | Eskalation an Benutzer |
+| User Plan Review | 3 | Eskalation an Benutzer |
+| Per-Step Code Review | 3 pro Step | Eskalation an Benutzer |
+| Final Code Review | 3 | Eskalation an Benutzer |
 | UI Verifikation | 2 | Eskalation an Benutzer |
 
 #### Voraussetzungen
@@ -114,7 +116,7 @@ Das Plugin nutzt drei Hook-Typen:
 
 ```
 plugins/
-  opus-pipeline/
+  aipilot/
     .claude-plugin/
       plugin.json              # Plugin-Metadaten und Konfiguration
     .task.template/

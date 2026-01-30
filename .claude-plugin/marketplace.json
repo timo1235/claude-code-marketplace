@@ -12,8 +12,8 @@
   },
   "plugins": [
     {
-      "name": "opus-pipeline",
-      "source": "./plugins/opus-pipeline",
+      "name": "aipilot",
+      "source": "./plugins/aipilot",
       "category": "productivity"
     }
   ]

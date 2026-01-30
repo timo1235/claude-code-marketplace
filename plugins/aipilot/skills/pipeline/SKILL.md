@@ -12,12 +12,16 @@ You are the **Pipeline Orchestrator**. You coordinate specialized agents through
 ## Pipeline Overview
 
 ```
-Phase 1: Analyze & Plan       (Opus)      → .task/plan.md + .task/plan.json
+Phase 1: Analyze & Plan       (Opus)      → .task/plan.md + .task/plan.json (1-5 steps)
 Phase 2: Plan Review           (Codex)     → .task/plan-review.json
 Phase 3: Plan Revision         (Opus)      → Updated .task/plan.md (if needed)
 Phase 4: User Review           (Manual)    → User reviews/edits plan, loops through 2-3-4
-Phase 5: Implementation        (Opus)      → Code changes, iterative
-Phase 6: Code Review           (Codex)     → .task/code-review.json
+Phase 5: Step-by-Step Implementation + Per-Step Review
+          For each step N:
+            5a: Implement Step N  (Opus)    → .task/step-N-result.json
+            5b: Review Step N     (Codex)   → .task/step-N-review.json
+            (fix loop if needed, max 3 iterations per step)
+Phase 6: Final Review          (Codex)     → .task/code-review.json (all changes)
 Phase 7: UI Verification       (Opus)      → .task/ui-review.json (if UI changes)
 ```
 
@@ -42,16 +46,24 @@ When the user invokes this skill:
 
 ## Task Chain Creation
 
-Create these tasks with `TaskCreate` and proper `blockedBy`:
+Create these initial tasks with `TaskCreate` and proper `blockedBy`:
 
 ```
 T1: "Analyze codebase and create implementation plan"     blockedBy: []
 T2: "Review plan with Codex"                               blockedBy: [T1]
 T3: "Revise plan based on review"                          blockedBy: [T2]
 T4: "User review of plan"                                  blockedBy: [T3]
-T5: "Implement plan"                                       blockedBy: [T4]
-T6: "Code review with Codex"                               blockedBy: [T5]
-T7: "UI verification with Playwright"                      blockedBy: [T6]
+```
+
+After Phase 4 (plan approved), dynamically create tasks based on the number of steps in `plan.json`:
+
+```
+For each step N (1 to total_steps):
+  T-impl-N: "Implement step N: [step title]"              blockedBy: [previous step's review task, or T4 for step 1]
+  T-review-N: "Review step N"                              blockedBy: [T-impl-N]
+
+T-final-review: "Final code review (all changes)"         blockedBy: [last step's review task]
+T-ui: "UI verification with Playwright"                    blockedBy: [T-final-review]
 ```
 
 Store task IDs in `.task/pipeline-tasks.json`.
@@ -94,17 +106,42 @@ Store task IDs in `.task/pipeline-tasks.json`.
 - If **"Plan approved"** → continue to Phase 5
 - If **"Cancel pipeline"** → stop
 
-### Phase 5: Implementation
-- Launch `implementer` agent (model: opus)
-- Agent reads `.task/plan.json`, implements step by step
-- Agent creates subtasks for each plan step
-- Agent writes `.task/impl-result.json` when done
-- Check `has_ui_changes` in result to decide Phase 7
+### Phase 5: Step-by-Step Implementation + Per-Step Review
 
-### Phase 6: Code Review
-- Launch `code-reviewer` agent (model: codex via script)
-- Agent reviews all changed files, writes `.task/code-review.json`
-- If `status: "needs_changes"` → launch implementer to fix, then re-review (max 3 iterations)
+After plan approval, read `.task/plan.json` to get `total_steps`. Update state with `current_step: 1` and `total_steps`.
+
+**For each step N (1 to total_steps):**
+
+1. Update state: `current_step: N`, `phase: "implementing_step_N"`
+2. **5a: Implement Step N**
+   - Launch `implementer` agent (model: opus) with `step_id: N`
+   - Agent reads `.task/plan.json`, implements ONLY step N
+   - Agent writes `.task/step-N-result.json`
+3. **5b: Review Step N**
+   - Launch `code-reviewer` agent (model: codex via script) with `step_id: N`
+   - Agent reviews ONLY changes from step N, verifies step completeness
+   - Agent writes `.task/step-N-review.json`
+4. **Handle review result:**
+   - If `status: "approved"` → proceed to step N+1
+   - If `status: "needs_changes"` → re-launch implementer with `step_id: N` (reads `.task/step-N-review.json` for fixes), then re-review. Max 3 fix iterations per step.
+   - If max iterations exhausted → escalate to user
+
+After ALL steps complete, write `.task/impl-result.json` as a summary combining all `step-N-result.json` files:
+```json
+{
+  "status": "complete",
+  "has_ui_changes": true|false,
+  "total_steps": 3,
+  "steps_completed": [ /* merged from all step-N-result.json */ ],
+  "files_changed": [ /* all files from all steps */ ]
+}
+```
+
+### Phase 6: Final Code Review
+- Launch `code-reviewer` agent (model: codex via script) with `step_id: "final"`
+- Agent reviews ALL changes across all steps, verifies overall completeness against the full plan
+- Agent writes `.task/code-review.json`
+- If `status: "needs_changes"` → launch implementer to fix (reads `.task/code-review.json`), then re-review (max 3 iterations)
 - If `status: "approved"` → continue
 
 ### Phase 7: UI Verification (conditional)
@@ -122,7 +159,8 @@ Store task IDs in `.task/pipeline-tasks.json`.
 
 - Max 3 plan review iterations before escalating to user
 - Max 3 user plan review iterations before escalating to user
-- Max 3 code review iterations before escalating to user
+- Max 3 per-step code review iterations (per step) before escalating to user
+- Max 3 final code review iterations before escalating to user
 - Max 2 UI fix iterations before escalating to user
 - Always show the user what failed and why
 
@@ -137,12 +175,16 @@ Store task IDs in `.task/pipeline-tasks.json`.
 Update `.task/state.json` after each phase transition:
 ```json
 {
-  "phase": "implementing",
+  "phase": "implementing_step_2",
   "plan_approved": true,
   "implementation_complete": false,
   "code_review_passed": false,
   "ui_review_passed": false,
   "has_ui_changes": false,
-  "iteration": 0
+  "iteration": 0,
+  "current_step": 2,
+  "total_steps": 3
 }
 ```
+
+Phase values during step execution: `implementing_step_N`, `reviewing_step_N`, `final_review`.

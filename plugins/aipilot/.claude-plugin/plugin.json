@@ -1,7 +1,7 @@
 {
-  "name": "opus-pipeline",
+  "name": "aipilot",
   "version": "1.0.0",
-  "description": "Multi-AI orchestration pipeline: Opus plans, Codex reviews, User approves, Opus implements, Playwright verifies UI",
+  "description": "AI-Pilot: Multi-agent orchestration pipeline with step-by-step implementation and per-step code review",
   "author": {
     "name": "Timo",
     "url": "https://github.com/timo1235"

@@ -88,6 +88,20 @@ Write a structured JSON file:
 
 ## Rules
 
+### Step Count
+- MUST divide the plan into **1-5 steps** based on task complexity:
+  - **Simple tasks** (single file change, small fix): 1-2 steps
+  - **Medium tasks** (a few files, moderate logic): 3 steps
+  - **Complex tasks** (many files, architectural changes): 4-5 steps
+- Never exceed 5 steps. If the task seems to need more, group related changes into a single step.
+
+### plan.md Formatting
+- plan.md must be **user-friendly and scannable**: Clear structure, short descriptions, no code blocks.
+- The user should understand what will happen **at a glance** without reading code.
+- Code details, exact file paths, and technical specifics belong in `plan.json`, not in `plan.md`.
+- Use bullet points, keep descriptions to 1-2 sentences per step.
+
+### General
 - MUST read existing code before planning. Never plan changes to code you haven't read.
 - MUST identify ALL affected files — don't miss indirect dependencies.
 - MUST consider error handling and edge cases in each step.

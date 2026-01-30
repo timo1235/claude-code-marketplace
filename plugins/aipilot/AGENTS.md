@@ -4,10 +4,10 @@
 
 | Agent | Model | Role | I/O |
 |-------|-------|------|-----|
-| analyzer | opus | Codebase analysis + plan creation | → plan.md, plan.json |
+| analyzer | opus | Codebase analysis + plan creation (1-5 steps) | → plan.md, plan.json |
 | plan-reviewer | codex | Plan verification | plan.md → plan-review.json |
-| implementer | opus | Step-by-step implementation | plan.json → code + impl-result.json |
-| code-reviewer | codex | Implementation review | changed files → code-review.json |
+| implementer | opus | Single-step implementation (one step at a time) | plan.json + step_id → step-N-result.json |
+| code-reviewer | codex | Step review or final review (dual mode) | changed files + step_id → step-N-review.json or code-review.json |
 | ui-verifier | opus | Visual UI verification via Playwright | running app → ui-review.json |
 
 ## Agent Details
@@ -16,7 +16,7 @@
 
 **Personas:** Senior Architect + Fullstack Developer
 
-**Purpose:** Analyze the codebase to understand existing patterns, then create a comprehensive implementation plan.
+**Purpose:** Analyze the codebase to understand existing patterns, then create a comprehensive implementation plan with 1-5 steps.
 
 **Input:**
 - User's task description
@@ -24,10 +24,11 @@
 - Previous review findings (if revision)
 
 **Output:**
-- `.task/plan.md` — Human-readable plan with clear steps, rationale, affected files
-- `.task/plan.json` — Structured plan for machine consumption
+- `.task/plan.md` — User-friendly, scannable plan (no code blocks, short descriptions)
+- `.task/plan.json` — Structured plan with technical details for machine consumption
 
 **Rules:**
+- MUST divide plan into 1-5 steps based on complexity (simple: 1-2, medium: 3, complex: 4-5)
 - MUST read existing code before planning changes
 - MUST identify all affected files
 - MUST consider edge cases and error handling
@@ -60,23 +61,23 @@
 
 **Personas:** Fullstack Developer + TDD Practitioner + Quality Engineer
 
-**Purpose:** Execute the approved plan step by step.
+**Purpose:** Implement a single step from the approved plan. Called once per step by the orchestrator.
 
 **Input:**
-- `.task/plan.json` — The approved plan
-- Codebase access
+- `step_id` — The step number to implement
+- `.task/plan.json` — The approved plan (for context)
+- `.task/step-{N}-review.json` — Review findings (if fix iteration)
+- Prior step results `.task/step-{1..N-1}-result.json` (for context)
 
 **Output:**
 - Code changes (via Edit/Write tools)
-- `.task/impl-result.json` — Summary of what was done
-- Progress subtasks for each plan step
+- `.task/step-{N}-result.json` — Summary of what was done in this step
 
 **Rules:**
-- MUST create subtasks for each plan step before starting
+- MUST implement ONLY the step matching `step_id`
 - MUST follow the plan exactly (no improvisation)
 - MUST write tests for business logic changes
-- MUST continue through ALL steps without stopping
-- MUST set `has_ui_changes` in impl-result if any UI files were modified
+- MUST set `has_ui_changes` in step result if any UI files were modified
 - Does NOT interact with user directly
 - If truly blocked (missing credentials, conflicting requirements) → set status "partial" with reason
 
@@ -84,19 +85,23 @@
 
 **Personas:** Security Auditor + Performance Engineer + Quality Reviewer
 
-**Purpose:** Review all code changes for correctness, security, and quality.
+**Purpose:** Review code changes in two modes: per-step review or final review of all changes.
 
-**Input:**
-- All changed files (via git diff)
-- `.task/plan.json` — To verify plan was followed
-- `.task/impl-result.json` — To understand what was done
+**Mode 1 — Step Review** (`step_id: N`):
+- Reviews ONLY changes from step N
+- Verifies step completeness
+- Input: `.task/plan.json` (step N) + `.task/step-N-result.json`
+- Output: `.task/step-N-review.json`
 
-**Output:**
-- `.task/code-review.json`
+**Mode 2 — Final Review** (`step_id: "final"`):
+- Reviews ALL changes across all steps
+- Verifies overall plan completeness
+- Input: `.task/plan.json` + `.task/impl-result.json` + all step results
+- Output: `.task/code-review.json`
 
 **Rules:**
-- MUST check every changed file
-- MUST verify plan steps were implemented correctly
+- MUST check every changed file relevant to the review scope
+- MUST verify plan adherence (step-level or full plan)
 - MUST flag security issues (OWASP Top 10)
 - MUST check for dead code, unused imports
 - MUST verify tests exist for new logic
