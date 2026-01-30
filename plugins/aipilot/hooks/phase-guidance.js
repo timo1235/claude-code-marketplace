@@ -152,12 +152,13 @@ function computeGuidance() {
   const projectDir = getProjectDir();
   const taskDir = path.join(projectDir, '.task');
 
-  // Fix 3: Provide initialization guidance when .task/ is missing
+  // Provide initialization guidance when .task/ is missing
   if (!fileExists(taskDir)) {
     return [
-      '[PIPELINE] Not initialized: .task/ directory missing.',
-      '[PIPELINE] Run Initialization: reset pipeline, preflight check, create task chain, write pipeline-tasks.json + state.json.',
-      '[PIPELINE] Do NOT call Task() until .task/pipeline-tasks.json exists.'
+      '[PIPELINE] Not initialized.',
+      '[PIPELINE] Step 1: Bash("${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.sh" init --project-dir "${CLAUDE_PROJECT_DIR}")',
+      '[PIPELINE] Step 2: Create 4 tasks with TaskCreate + blockedBy, then Write pipeline-tasks.json with task IDs.',
+      '[PIPELINE] Do NOT call Task() until pipeline-tasks.json exists.'
     ].join('\n');
   }
 
@@ -165,8 +166,9 @@ function computeGuidance() {
   const pipelineTasks = readJsonSafe(path.join(taskDir, 'pipeline-tasks.json'));
   if (!pipelineTasks) {
     return [
-      '[PIPELINE] Missing .task/pipeline-tasks.json — initialization incomplete.',
-      '[PIPELINE] Complete initialization: create task chain with TaskCreate, then write pipeline-tasks.json with task IDs.',
+      '[PIPELINE] .task/ exists but pipeline-tasks.json missing — initialization incomplete.',
+      '[PIPELINE] Use TaskCreate to create 4 phase tasks with blockedBy dependencies.',
+      '[PIPELINE] Then Write pipeline-tasks.json with the task IDs.',
       '[PIPELINE] Do NOT call Task() until pipeline-tasks.json exists.'
     ].join('\n');
   }
@@ -179,17 +181,8 @@ function computeGuidance() {
     messages.push(`[PIPELINE] ${detected.detail}`);
   }
 
-  // Also include state.json info if available (supplementary, not primary)
-  const state = readJsonSafe(path.join(taskDir, 'state.json'));
-  if (state && state.phase) {
-    const stepInfo = state.current_step && state.total_steps
-      ? ` | Step: ${state.current_step}/${state.total_steps}`
-      : '';
-    messages.push(`[PIPELINE] State: ${state.phase} | Iteration: ${state.iteration || 0}${stepInfo}`);
-  }
-
   // Main Loop reminder
-  messages.push('[PIPELINE] Use Main Loop: TaskList() → find unblocked pending task → execute → complete → repeat.');
+  messages.push('[PIPELINE] Main Loop: TaskList() → find unblocked pending task → execute → complete → repeat.');
 
   return messages.join('\n');
 }

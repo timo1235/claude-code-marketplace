@@ -3,6 +3,7 @@ set -euo pipefail
 
 # Pipeline orchestrator utility script.
 # Usage:
+#   bash orchestrator.sh init [--project-dir /path]     # reset + preflight (single init call)
 #   bash orchestrator.sh reset [--project-dir /path]
 #   bash orchestrator.sh status [--project-dir /path]
 #   bash orchestrator.sh dry-run [--plugin-root /path]
@@ -304,6 +305,7 @@ cmd_help() {
   echo "Usage: orchestrator.sh <command> [options]"
   echo ""
   echo "Commands:"
+  echo "  init      Reset pipeline + run preflight check (use this to start)"
   echo "  reset     Remove all .task/ artifacts and session markers"
   echo "  status    Show current pipeline phase (artifact-based)"
   echo "  dry-run   Validate setup: scripts, agents, schemas, CLI tools"
@@ -314,9 +316,58 @@ cmd_help() {
   echo "  --plugin-root /path    Plugin root directory (default: auto-detected)"
 }
 
+# --- Init (reset + preflight in one call) ---
+
+cmd_init() {
+  acquire_lock
+
+  echo "=== Pipeline Init ==="
+  echo "Project: $PROJECT_DIR"
+  echo ""
+
+  # Step 1: Reset
+  if [ -d "$TASK_DIR" ]; then
+    local count=0
+    for f in "$TASK_DIR"/*.json "$TASK_DIR"/*.md "$TASK_DIR"/.codex-session-* "$TASK_DIR"/codex_stderr.log; do
+      if [ -f "$f" ]; then
+        rm -f "$f"
+        count=$((count + 1))
+      fi
+    done
+    echo "Reset: removed $count artifact(s)."
+  else
+    mkdir -p "$TASK_DIR"
+    echo "Reset: created .task/ directory."
+  fi
+
+  # Step 2: Preflight check
+  echo ""
+  echo "--- Preflight ---"
+  if ! command -v node >/dev/null 2>&1; then
+    echo "FAIL: node not found"
+    exit 1
+  fi
+  echo "  OK  node ($(node --version 2>/dev/null))"
+
+  if command -v codex >/dev/null 2>&1; then
+    if node "$PLUGIN_ROOT/scripts/codex-review.js" --type preflight 2>/dev/null; then
+      echo "  OK  Codex preflight passed"
+    else
+      echo "  FAIL  Codex preflight failed"
+      exit 1
+    fi
+  else
+    echo "  WARN  Codex not installed (reviews will fail)"
+  fi
+
+  echo ""
+  echo "=== Init complete. Create task chain with TaskCreate next. ==="
+}
+
 # --- Main ---
 
 case "$COMMAND" in
+  init)     cmd_init ;;
   reset)    cmd_reset ;;
   status)   cmd_status ;;
   dry-run)  cmd_dry_run ;;

@@ -14,58 +14,38 @@ You coordinate worker agents using Task tools, handle user questions, and drive 
 
 ---
 
-## Initialization (HARD GATE — complete ALL steps before ANY Task())
+## Pipeline Initialization
 
-You MUST NOT call `Task()` until `.task/pipeline-tasks.json` exists. The PreToolUse hook will BLOCK any agent launch without it.
+### Step 1: Init Pipeline
 
-### Step 1: Get task description
-
-If the user did not provide a task description, use `AskUserQuestion` to get it.
-
-### Step 2: Reset pipeline
-
-```
-Bash("${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.sh reset --project-dir ${CLAUDE_PROJECT_DIR}")
+```bash
+"${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.sh" init --project-dir "${CLAUDE_PROJECT_DIR}"
 ```
 
-This clears stale artifacts from any previous run.
+This resets `.task/`, runs preflight checks, and prepares for task creation.
+If it fails, ABORT and tell the user why.
 
-### Step 3: Run Codex preflight
+### Step 2: Create Task Chain
 
-```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type preflight")
-```
+If the user did not provide a task description, use `AskUserQuestion` to get it first.
 
-- Exit 0 → continue
-- Any failure → ABORT. Tell user: "Codex CLI not available. Pipeline requires Codex."
-
-### Step 4: Create task chain
+Create all pipeline tasks with dependencies. Store task IDs in `.task/pipeline-tasks.json`.
 
 ```
-T1 = TaskCreate({ subject: "Phase 1: Analyze codebase and create plan", description: "Run analyzer agent to explore codebase and create plan.md + plan.json", activeForm: "Analyzing codebase" })
-T2 = TaskCreate({ subject: "Phase 2: Codex plan review", description: "Run codex-review.js --type plan", activeForm: "Running Codex plan review" })
-T3 = TaskCreate({ subject: "Phase 3: Revise plan (if needed)", description: "Run analyzer with review findings to revise plan", activeForm: "Revising plan" })
-T4 = TaskCreate({ subject: "Phase 4: User review of plan", description: "Ask user to approve plan.md", activeForm: "Waiting for user review" })
-
-TaskUpdate(T2, addBlockedBy: [T1])
-TaskUpdate(T3, addBlockedBy: [T2])
-TaskUpdate(T4, addBlockedBy: [T3])
+TaskCreate: "Phase 1: Analyze codebase and create plan"    → T1 (blockedBy: [])
+TaskCreate: "Phase 2: Codex plan review"                   → T2 (blockedBy: [T1])
+TaskCreate: "Phase 3: Revise plan (if needed)"             → T3 (blockedBy: [T2])
+TaskCreate: "Phase 4: User review of plan"                 → T4 (blockedBy: [T3])
 ```
 
-### Step 5: Write gating artifacts
-
-```
-Write(".task/pipeline-tasks.json", {
-  "phase1": "<T1-id>",
-  "phase2": "<T2-id>",
-  "phase3": "<T3-id>",
-  "phase4": "<T4-id>"
-})
-
-Write(".task/state.json", {
-  "phase": "initialized",
-  "iteration": 0
-})
+Save to `.task/pipeline-tasks.json`:
+```json
+{
+  "phase1": "T1-id",
+  "phase2": "T2-id",
+  "phase3": "T3-id",
+  "phase4": "T4-id"
+}
 ```
 
 **Initialization is now complete. Enter the Main Loop.**
@@ -224,16 +204,18 @@ All tasks completed → summarize changes to user and report final status.
 ## Rules
 
 - NEVER call `Task()` before `.task/pipeline-tasks.json` exists
+- NEVER skip Step 1 (init) or Step 2 (task chain) — they are mandatory
+- NEVER write pipeline-tasks.json or state.json manually without TaskCreate first
 - NEVER output summaries between phases — just proceed via Main Loop
 - NEVER say "Soll ich..." or "Shall I..." — keep moving
 - NEVER stop between phases except Phase 4 (User Review)
 - NEVER write code yourself — delegate to agents
+- ALWAYS run `orchestrator.sh init` as the very first action
+- ALWAYS use TaskCreate to create tasks — do NOT skip this
 - ALWAYS wrap agent input in XML tags: `<task_description>`, `<step_id>`, `<fix_findings>`, `<review_findings>`, `<verification_scope>`
 - Max 3 iterations per review gate, max 2 UI fix iterations
 - If any agent fails → report error, ask user
 - If Codex unavailable → ABORT pipeline
 - If Playwright unavailable → skip UI verification, warn user
-- Codex flags: `--plugin-root`, `--resume`, `--changes-summary`
-- Exit codes: 0=success, 1=validation, 2=codex error, 3=timeout
 
 </rules>

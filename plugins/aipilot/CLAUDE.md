@@ -24,8 +24,7 @@ All pipeline artifacts are stored in `.task/` in the project directory:
 
 | File | Purpose |
 |------|---------|
-| `state.json` | Current pipeline state |
-| `pipeline-tasks.json` | Task ID mapping |
+| `pipeline-tasks.json` | Task ID mapping (gating artifact — must exist before Task()) |
 | `plan.md` | Human-readable plan (editable) |
 | `plan.json` | Machine-readable plan |
 | `plan-review.json` | Codex plan review results |

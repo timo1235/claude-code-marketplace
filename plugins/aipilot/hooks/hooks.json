@@ -1,5 +1,5 @@
 {
-  "description": "Opus Pipeline hooks for phase guidance and review enforcement",
+  "description": "Pipeline hooks: phase guidance (advisory) + review gate (enforcement on SubagentStop)",
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -17,17 +17,6 @@
           {
             "type": "command",
             "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/review-gate.js"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/enforce-opus-agents.sh"
           }
         ]
       }
