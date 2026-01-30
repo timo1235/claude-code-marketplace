@@ -5,9 +5,9 @@
 | Agent | Model | Role | I/O |
 |-------|-------|------|-----|
 | analyzer | Opus (Task agent) | Codebase analysis + plan creation (1-5 steps) | → plan.md, plan.json |
-| plan-reviewer | Codex CLI (Bash) | Plan verification | plan.md → plan-review.json |
+| plan-reviewer | Codex CLI (Bash) — NOT a Task agent | Plan verification | plan.md → plan-review.json |
 | implementer | Opus (Task agent) | Single-step implementation (one step at a time) | plan.json + step_id → step-N-result.json |
-| code-reviewer | Codex CLI (Bash) | Step review or final review (dual mode) | changed files → step-N-review.json or code-review.json |
+| code-reviewer | Codex CLI (Bash) — NOT a Task agent | Step review or final review (dual mode) | changed files → step-N-review.json or code-review.json |
 | ui-verifier | Opus (Task agent) | Visual UI verification via Playwright | running app → ui-review.json |
 
 ## Agent Details
@@ -37,6 +37,8 @@
 - Does NOT write code, only plans
 
 ### plan-reviewer
+
+> Prompt definition: `docs/codex-prompts/plan-reviewer.md` (NOT in `agents/` — intentionally excluded from Task agent registration)
 
 **Invocation:** Codex CLI via `node codex-review.js --type plan`
 
@@ -75,6 +77,8 @@
 - If truly blocked (missing credentials, conflicting requirements) → set status "partial" with reason
 
 ### code-reviewer
+
+> Prompt definition: `docs/codex-prompts/code-reviewer.md` (NOT in `agents/` — intentionally excluded from Task agent registration)
 
 **Invocation:** Codex CLI via `node codex-review.js --type step-review|final-review`
 

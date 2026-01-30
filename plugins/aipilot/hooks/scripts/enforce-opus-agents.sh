@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 # PreToolUse hook for Task tool: Ensures analyzer, implementer, and ui-verifier
-# agents use Opus model, and plan-reviewer/code-reviewer use the correct model.
+# agents use Opus model. Blocks plan-reviewer and code-reviewer from being
+# launched as Task subagents (they run via Codex CLI, not as Claude subagents).
 #
 # Reads the Task tool input from stdin and checks the model parameter.
 
@@ -22,6 +23,15 @@ MODEL=$(echo "$INPUT" | node -e "
   const input = data.tool_input || {};
   console.log(input.model || '');
 " 2>/dev/null || echo "")
+
+# Block reviewers from being launched as Task subagents — they run via Codex CLI
+BLOCKED_AGENTS="plan-reviewer code-reviewer aipilot:plan-reviewer aipilot:code-reviewer"
+for agent in $BLOCKED_AGENTS; do
+  if [ "$SUBAGENT_TYPE" = "$agent" ]; then
+    echo "{\"decision\": \"block\", \"reason\": \"'$SUBAGENT_TYPE' must NOT be launched as a Task subagent. Run reviews via Bash: node <plugin-root>/scripts/codex-review.js --type plan|step-review|final-review\"}"
+    exit 0
+  fi
+done
 
 # Agents that MUST use Opus
 OPUS_AGENTS="analyzer implementer ui-verifier general-purpose"
