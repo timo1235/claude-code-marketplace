@@ -35,10 +35,21 @@
 ┌─────────────────────────────────────────────────────────────────┐
 │  Phase 4: USER REVIEW                                            │
 │  User reads/edits .task/plan.md                                  │
-│  Options: Approve | Re-review | Cancel                           │
-└──────────────────────────┬──────────────────────────────────────┘
-                           │ approved
-                           ▼
+│  Options: Approve | I want changes | Cancel                      │
+│  Output: .task/user-plan-feedback.json (if changes wanted)       │
+│                                                                  │
+│  ┌─────────────┐  ┌──────────────┐  ┌──────────┐               │
+│  │  approved    │  │ want changes │  │  cancel  │               │
+│  └──────┬──────┘  └──────┬───────┘  └────┬─────┘               │
+│         │                │               │                       │
+│         │                ▼               ▼                       │
+│         │     Opus revises plan +    Stop Pipeline               │
+│         │     Codex re-reviews +                                 │
+│         │     User re-verifies                                   │
+│         │     (max 3 iterations)                                 │
+└─────────┼───────────────────────────────────────────────────────┘
+          │ approved
+          ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  Phase 5: IMPLEMENTATION                                         │
 │  Agent: implementer (Opus)                                       │
@@ -81,6 +92,7 @@
 | Phase | Max Iterations | On Exhaustion |
 |-------|---------------|---------------|
 | Plan Review | 3 | Escalate to user |
+| User Plan Review | 3 | Escalate to user |
 | Code Review | 3 | Escalate to user |
 | UI Verification | 2 | Escalate to user |
 
@@ -95,6 +107,7 @@ All stored in `.task/` directory:
 | `plan.md` | Analyzer | 1, 3 |
 | `plan.json` | Analyzer | 1, 3 |
 | `plan-review.json` | Codex | 2 |
+| `user-plan-feedback.json` | Orchestrator | 4 |
 | `impl-result.json` | Implementer | 5 |
 | `code-review.json` | Codex | 6 |
 | `ui-review.json` | UI Verifier | 7 |

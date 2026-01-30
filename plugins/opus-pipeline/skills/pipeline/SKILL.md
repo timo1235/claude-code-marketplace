@@ -15,7 +15,7 @@ You are the **Pipeline Orchestrator**. You coordinate specialized agents through
 Phase 1: Analyze & Plan       (Opus)      → .task/plan.md + .task/plan.json
 Phase 2: Plan Review           (Codex)     → .task/plan-review.json
 Phase 3: Plan Revision         (Opus)      → Updated .task/plan.md (if needed)
-Phase 4: User Review           (Manual)    → User edits/approves plan.md
+Phase 4: User Review           (Manual)    → User reviews/edits plan, loops through 2-3-4
 Phase 5: Implementation        (Opus)      → Code changes, iterative
 Phase 6: Code Review           (Codex)     → .task/code-review.json
 Phase 7: UI Verification       (Opus)      → .task/ui-review.json (if UI changes)
@@ -76,9 +76,23 @@ Store task IDs in `.task/pipeline-tasks.json`.
 
 ### Phase 4: User Review
 - Tell the user: "The plan is ready for review at `.task/plan.md`. Please review it, make any edits, and confirm when ready."
-- Use `AskUserQuestion` with options: "Plan approved", "I made changes, re-review needed", "Cancel pipeline"
-- If re-review needed → back to Phase 2
-- If approved → continue
+- Use `AskUserQuestion` with options: "Plan approved", "I want changes", "Cancel pipeline"
+- If **"I want changes"**:
+  - Ask the user to describe what should change (use `AskUserQuestion` with free text)
+  - Write the user's feedback to `.task/user-plan-feedback.json`:
+    ```json
+    {
+      "status": "needs_changes",
+      "feedback": "User's description of requested changes",
+      "iteration": 1
+    }
+    ```
+  - Launch `analyzer` agent (Opus) to revise the plan based on user feedback → Phase 3
+  - Launch `plan-reviewer` agent (Codex) to re-review the revised plan → Phase 2
+  - Loop back to Phase 4 (User Review) so the user can verify the revised plan
+  - Max 3 user-plan-review iterations, then escalate
+- If **"Plan approved"** → continue to Phase 5
+- If **"Cancel pipeline"** → stop
 
 ### Phase 5: Implementation
 - Launch `implementer` agent (model: opus)
@@ -107,6 +121,7 @@ Store task IDs in `.task/pipeline-tasks.json`.
 ## Iteration Rules
 
 - Max 3 plan review iterations before escalating to user
+- Max 3 user plan review iterations before escalating to user
 - Max 3 code review iterations before escalating to user
 - Max 2 UI fix iterations before escalating to user
 - Always show the user what failed and why
