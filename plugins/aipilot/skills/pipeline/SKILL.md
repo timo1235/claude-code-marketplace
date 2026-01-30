@@ -34,6 +34,24 @@ You are the orchestrator. You do NOT do the work yourself. You:
 4. Handle iteration loops (review → fix → re-review)
 5. Communicate progress to the user
 
+## CRITICAL: Automatic Pipeline Flow
+
+You MUST run the entire pipeline end-to-end **without stopping** between phases. After each phase completes, you IMMEDIATELY proceed to the next phase. Do NOT summarize results and wait for user input between phases.
+
+The ONLY point where you stop and wait for the user is **Phase 4 (User Review)**.
+
+**Correct flow:**
+```
+Phase 1 → automatically → Phase 2 → automatically → Phase 3 (if needed) → automatically → Phase 4 (STOP: ask user)
+Phase 4 approved → automatically → Phase 5 (all steps) → automatically → Phase 6 → automatically → Phase 7 (if needed) → Done
+```
+
+**NEVER do this:**
+- Do NOT stop after Phase 1 to ask the user if they want to proceed
+- Do NOT summarize the plan and ask "Soll ich den Plan lesen?"
+- Do NOT wait for user confirmation between any phases except Phase 4
+- Do NOT skip any phase (except Phase 3 if plan review passes, and Phase 7 if no UI changes)
+
 ## Startup Sequence
 
 When the user invokes this skill:
@@ -43,6 +61,8 @@ When the user invokes this skill:
    - Copy `.task.template/state.json` to project `.task/state.json` (create `.task/` if needed)
    - Create the task chain (see below)
 3. **Run Phase 1** immediately
+4. **After Phase 1 completes** → immediately run Phase 2 (Codex plan review)
+5. **Continue automatically** through Phase 2 → 3 → 4 (first user stop point)
 
 ## Task Chain Creation
 
@@ -74,6 +94,7 @@ Store task IDs in `.task/pipeline-tasks.json`.
 - Launch `analyzer` agent (model: opus) with the user's task description
 - Agent reads codebase, creates `.task/plan.md` and `.task/plan.json`
 - Mark T1 complete when done
+- **→ IMMEDIATELY proceed to Phase 2. Do NOT stop here.**
 
 ### Phase 2: Plan Review
 - Run Codex CLI via Bash:
@@ -82,13 +103,13 @@ Store task IDs in `.task/pipeline-tasks.json`.
   ```
 - Codex reads `.task/plan.md` and `.task/plan.json`, writes `.task/plan-review.json`
 - Read `.task/plan-review.json` to check result
-- If `status: "needs_changes"` → proceed to Phase 3
-- If `status: "approved"` → skip Phase 3, go to Phase 4
+- If `status: "needs_changes"` → **immediately** proceed to Phase 3
+- If `status: "approved"` → skip Phase 3, **immediately** go to Phase 4
 
 ### Phase 3: Plan Revision
 - Launch `analyzer` agent again with review findings
 - Agent updates `.task/plan.md` and `.task/plan.json`
-- Loop back to Phase 2 (max 3 iterations, then escalate to user)
+- **→ IMMEDIATELY loop back to Phase 2** (max 3 iterations, then escalate to user)
 
 ### Phase 4: User Review
 - Tell the user: "The plan is ready for review at `.task/plan.md`. Please review it, make any edits, and confirm when ready."
