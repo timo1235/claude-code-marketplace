@@ -4,25 +4,26 @@
  * PostToolUse hook: Detects repeated errors and suggests /second-opinion.
  *
  * Reads tool result from stdin, extracts error signatures, tracks them in
- * .second-opinion/error-state.json. When the same error appears >= 2 times,
- * emits an advisory additionalContext message.
+ * a temp state file. When the same error appears >= 2 times, emits an
+ * advisory additionalContext message.
  *
  * Loop prevention:
  * - 3-minute cooldown between suggestions
- * - Max 3 suggestions per session
+ * - Max 3 suggestions per 30-minute window (auto-resets)
  * - Advisory only (exit 0), Claude decides whether to act
  */
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const os = require('os');
 
 // --- Constants ---
 
 const REPEAT_THRESHOLD = 2;
 const COOLDOWN_MS = 3 * 60 * 1000; // 3 minutes
 const MAX_OPINIONS = 3;
-const STATE_FILE = 'error-state.json';
+const OPINION_RESET_MS = 30 * 60 * 1000; // Reset opinion_count after 30 minutes
 
 // --- Helpers ---
 
@@ -30,17 +31,15 @@ function getProjectDir() {
   return process.env.CLAUDE_PROJECT_DIR || process.cwd();
 }
 
+function projectHash(projectDir) {
+  return crypto.createHash('md5').update(projectDir).digest('hex').substring(0, 10);
+}
+
 function readJsonSafe(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch {
     return null;
-  }
-}
-
-function ensureDir(dirPath) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
   }
 }
 
@@ -68,8 +67,9 @@ function extractErrorSignature(text) {
   for (const pattern of patterns) {
     const match = text.match(pattern);
     if (match) {
-      // Normalize: strip file paths, line numbers, memory addresses
+      // Normalize: strip file paths (Unix + Windows), line numbers, memory addresses
       const signature = match[1]
+        .replace(/[A-Z]:\\[^\s:]+/g, '<path>')
         .replace(/\/.+?:\d+:\d+/g, '<path>')
         .replace(/0x[0-9a-f]+/gi, '<addr>')
         .replace(/\d{4,}/g, '<num>')
@@ -77,6 +77,41 @@ function extractErrorSignature(text) {
       return signature;
     }
   }
+
+  return null;
+}
+
+/**
+ * Extract text content from hook payload.
+ * Covers multiple possible payload structures.
+ */
+function extractToolResultText(hookData) {
+  const tr = hookData?.tool_result;
+  if (!tr) return null;
+
+  // Direct string
+  if (typeof tr === 'string') return tr;
+
+  // Common fields
+  const candidates = [tr.stdout, tr.stderr, tr.output, tr.error, tr.content, tr.message];
+
+  // If tool_result is an object with a nested content array (structured tool results)
+  if (Array.isArray(tr.content)) {
+    for (const block of tr.content) {
+      if (typeof block === 'string') candidates.push(block);
+      if (block?.text) candidates.push(block.text);
+    }
+  }
+
+  for (const c of candidates) {
+    if (typeof c === 'string' && c.trim()) return c;
+  }
+
+  // Last resort: stringify the whole thing
+  try {
+    const str = JSON.stringify(tr);
+    if (str.length > 50) return str;
+  } catch { /* ignore */ }
 
   return null;
 }
@@ -107,10 +142,7 @@ function main() {
   }
 
   // Extract the tool result text
-  const toolResult = hookData?.tool_result?.stdout
-    || hookData?.tool_result?.stderr
-    || hookData?.tool_result?.output
-    || (typeof hookData?.tool_result === 'string' ? hookData.tool_result : null);
+  const toolResult = extractToolResultText(hookData);
 
   if (!toolResult) {
     process.exit(0);
@@ -126,10 +158,8 @@ function main() {
 
   const hash = hashSignature(signature);
   const projectDir = getProjectDir();
-  const opinionDir = path.join(projectDir, '.second-opinion');
-  const statePath = path.join(opinionDir, STATE_FILE);
-
-  ensureDir(opinionDir);
+  const pHash = projectHash(projectDir);
+  const statePath = path.join(os.tmpdir(), `second-opinion-${pHash}-errors.json`);
 
   // Read/init state
   let state = readJsonSafe(statePath) || {
@@ -137,6 +167,11 @@ function main() {
     last_opinion_timestamp: 0,
     opinion_count: 0,
   };
+
+  // Reset opinion_count if last suggestion was long ago
+  if (state.last_opinion_timestamp && (Date.now() - state.last_opinion_timestamp) > OPINION_RESET_MS) {
+    state.opinion_count = 0;
+  }
 
   // Find or create error entry
   let entry = state.errors.find(e => e.hash === hash);

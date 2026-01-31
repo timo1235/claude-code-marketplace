@@ -3,11 +3,14 @@
 /**
  * Second-opinion engine: gets an independent analysis from Codex CLI.
  *
+ * Reads context from stdin, invokes Codex, prints result JSON to stdout.
+ * All temp files are created in os.tmpdir() and cleaned up after use.
+ *
  * Usage:
- *   node get-opinion.js --context-file <path> --project-dir <path> --plugin-root <path>
+ *   echo "context..." | node get-opinion.js --project-dir <path> --plugin-root <path>
  *
  * Exit codes:
- *   0  = success (opinion written to .second-opinion/opinion.json)
+ *   0  = success (opinion JSON printed to stdout)
  *   1  = validation error
  *   2  = codex error
  *   3  = timeout
@@ -18,6 +21,8 @@
 const { execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
 
 // --- Constants ---
 
@@ -30,21 +35,32 @@ const EXIT_TIMEOUT = 3;
 const EXIT_LOCKED = 4;
 const EXIT_NO_CODEX = 10;
 
-const SECOND_OPINION_PROMPT = `You are providing a second opinion on a problem another AI is stuck on. Analyze independently. Do NOT repeat what has been tried. Focus on alternative approaches, missed root causes, different debugging strategies.
+const SECOND_OPINION_PROMPT = `You are a senior debugging specialist providing an independent second opinion. Another AI assistant has been working on this problem and is stuck. Your value comes from a fresh perspective — identify what was overlooked, not what was already tried.
 
-Read the context file provided for the full problem description, what has been tried so far, and relevant code. Then analyze the situation and provide your independent assessment.`;
+<instructions>
+1. Read the context file for the full problem description, prior attempts, errors, and relevant code
+2. Read the referenced source files in the project to verify claims and gather additional context
+3. Identify assumptions in the prior attempts that may be incorrect
+4. Formulate your own root cause hypothesis based on the evidence
+5. Propose 3-4 alternative approaches ordered by confidence level
+
+Focus your analysis on:
+- Root causes the prior attempts may have missed (look for off-by-one layers: is the real bug one function/file/abstraction level away from where they looked?)
+- Environmental or configuration factors that could explain the behavior
+- Interactions between components that may not be obvious from reading individual files
+- Whether the error message is misleading and the actual failure point is elsewhere
+
+Rate each suggestion's confidence honestly: "high" only when you have strong evidence from the code, "medium" when the reasoning is sound but unverified, "low" for speculative ideas worth investigating.
+</instructions>`;
 
 // --- Argument Parsing ---
 
 function parseArgs() {
   const args = process.argv.slice(2);
-  const result = { contextFile: null, projectDir: null, pluginRoot: null };
+  const result = { projectDir: null, pluginRoot: null };
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
-      case '--context-file':
-        result.contextFile = args[++i];
-        break;
       case '--project-dir':
         result.projectDir = args[++i];
         break;
@@ -67,10 +83,12 @@ function readFileSafe(filePath) {
   }
 }
 
-function ensureDir(dirPath) {
-  if (!fs.existsSync(dirPath)) {
-    fs.mkdirSync(dirPath, { recursive: true });
-  }
+function removeSafe(filePath) {
+  try { fs.unlinkSync(filePath); } catch { /* ignore */ }
+}
+
+function projectHash(projectDir) {
+  return crypto.createHash('md5').update(projectDir).digest('hex').substring(0, 10);
 }
 
 // --- Codex CLI Discovery ---
@@ -94,45 +112,48 @@ function findCodex() {
   return null;
 }
 
-// --- Lockfile ---
+// --- Atomic Lockfile ---
 
-function acquireLock(opinionDir) {
-  const lockPath = path.join(opinionDir, '.opinion.lock');
+function acquireLock(lockPath) {
   try {
+    // Check for existing lock and stale detection
     if (fs.existsSync(lockPath)) {
       const lockContent = readFileSafe(lockPath);
       if (lockContent) {
-        const lock = JSON.parse(lockContent);
-        const age = Date.now() - lock.timestamp;
-        if (age < LOCK_STALE_MS) {
-          return { acquired: false, pid: lock.pid, age: Math.round(age / 1000) };
-        }
-        console.error(`[second-opinion] Removing stale lock (age: ${Math.round(age / 1000)}s, pid: ${lock.pid})`);
+        try {
+          const lock = JSON.parse(lockContent);
+          const age = Date.now() - lock.timestamp;
+          if (age < LOCK_STALE_MS) {
+            return { acquired: false, pid: lock.pid, age: Math.round(age / 1000) };
+          }
+        } catch { /* corrupt lock, remove it */ }
+        removeSafe(lockPath);
       }
     }
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, timestamp: Date.now() }), 'utf8');
+    // Atomic create — O_EXCL fails if file already exists
+    const fd = fs.openSync(lockPath, 'wx');
+    fs.writeSync(fd, JSON.stringify({ pid: process.pid, timestamp: Date.now() }));
+    fs.closeSync(fd);
     return { acquired: true };
-  } catch {
-    return { acquired: true };
+  } catch (err) {
+    if (err.code === 'EEXIST') {
+      // Another process created the lock between our check and open
+      return { acquired: false, pid: 'unknown', age: 0 };
+    }
+    // Filesystem error — fail closed (don't proceed)
+    return { acquired: false, pid: 'unknown', age: 0 };
   }
 }
 
-function releaseLock(opinionDir) {
-  const lockPath = path.join(opinionDir, '.opinion.lock');
-  try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
+function releaseLock(lockPath) {
+  removeSafe(lockPath);
 }
 
 // --- Codex Execution ---
 
-async function runCodex(codexPath, contextFile, outputPath, schemaPath, projectDir) {
+async function runCodex(codexPath, contextFilePath, outputPath, schemaPath, projectDir) {
   return new Promise((resolve, reject) => {
-    const contextContent = readFileSafe(contextFile);
-    if (!contextContent) {
-      reject(new Error(`Cannot read context file: ${contextFile}`));
-      return;
-    }
-
-    const prompt = `${SECOND_OPINION_PROMPT}\n\nContext file to read: ${contextFile}`;
+    const prompt = `${SECOND_OPINION_PROMPT}\n\nContext file to read: ${contextFilePath}`;
 
     const args = [
       'exec',
@@ -171,13 +192,6 @@ async function runCodex(codexPath, contextFile, outputPath, schemaPath, projectD
     child.on('close', (code) => {
       clearTimeout(timeout);
 
-      if (stderr) {
-        try {
-          const logPath = path.join(path.dirname(outputPath), 'codex_stderr.log');
-          fs.writeFileSync(logPath, stderr);
-        } catch { /* non-fatal */ }
-      }
-
       if (timedOut) {
         reject(Object.assign(new Error(`Codex timed out after ${TIMEOUT_MS / 1000}s`), { exitCode: EXIT_TIMEOUT }));
         return;
@@ -203,12 +217,7 @@ async function runCodex(codexPath, contextFile, outputPath, schemaPath, projectD
 
 // --- Output Validation ---
 
-function validateOutput(outputPath) {
-  if (!fs.existsSync(outputPath)) {
-    return { valid: false, errors: [`Output file not found: ${outputPath}`] };
-  }
-
-  const content = readFileSafe(outputPath);
+function validateOutput(content) {
   let parsed;
   try {
     parsed = JSON.parse(content);
@@ -234,20 +243,27 @@ function validateOutput(outputPath) {
 // --- Main ---
 
 async function main() {
-  const { contextFile, projectDir, pluginRoot } = parseArgs();
-
-  if (!contextFile) {
-    console.error('Usage: get-opinion.js --context-file <path> --project-dir <path> --plugin-root <path>');
-    process.exit(EXIT_VALIDATION);
-  }
+  const { projectDir, pluginRoot } = parseArgs();
 
   const dir = projectDir || process.env.CLAUDE_PROJECT_DIR || process.cwd();
   const resolvedPluginRoot = pluginRoot || path.resolve(__dirname, '..');
-  const opinionDir = path.join(dir, '.second-opinion');
-  const outputPath = path.join(opinionDir, 'opinion.json');
   const schemaPath = path.join(resolvedPluginRoot, 'docs', 'schemas', 'second-opinion.schema.json');
+  const hash = projectHash(dir);
+  const tmpDir = os.tmpdir();
 
-  ensureDir(opinionDir);
+  // Read context from stdin
+  let context = '';
+  try {
+    context = fs.readFileSync(0, 'utf8');
+  } catch {
+    console.error('[second-opinion] No context provided on stdin.');
+    process.exit(EXIT_VALIDATION);
+  }
+
+  if (!context.trim()) {
+    console.error('[second-opinion] Empty context provided.');
+    process.exit(EXIT_VALIDATION);
+  }
 
   // Check for Codex
   const codexPath = findCodex();
@@ -256,29 +272,50 @@ async function main() {
     process.exit(EXIT_NO_CODEX);
   }
 
-  // Acquire lock
-  const lock = acquireLock(opinionDir);
+  // Acquire atomic lock
+  const lockPath = path.join(tmpDir, `second-opinion-${hash}.lock`);
+  const lock = acquireLock(lockPath);
   if (!lock.acquired) {
     console.error(`[second-opinion] BLOCKED: Another opinion process running (pid: ${lock.pid}, age: ${lock.age}s).`);
     process.exit(EXIT_LOCKED);
   }
 
-  const cleanupLock = () => releaseLock(opinionDir);
-  process.on('exit', cleanupLock);
-  process.on('SIGTERM', () => { cleanupLock(); process.exit(1); });
-  process.on('SIGINT', () => { cleanupLock(); process.exit(1); });
+  // Temp files for Codex
+  const contextFilePath = path.join(tmpDir, `second-opinion-${hash}-context.md`);
+  const outputPath = path.join(tmpDir, `second-opinion-${hash}-output.json`);
+
+  const cleanup = () => {
+    releaseLock(lockPath);
+    removeSafe(contextFilePath);
+    removeSafe(outputPath);
+  };
+
+  process.on('exit', cleanup);
+  process.on('SIGTERM', () => { cleanup(); process.exit(1); });
+  process.on('SIGINT', () => { cleanup(); process.exit(1); });
+
+  // Write context to temp file (Codex needs a file to read)
+  fs.writeFileSync(contextFilePath, context, 'utf8');
 
   console.error(`[second-opinion] Starting opinion generation using Codex at ${codexPath}`);
 
   try {
-    await runCodex(codexPath, contextFile, outputPath, schemaPath, dir);
+    await runCodex(codexPath, contextFilePath, outputPath, schemaPath, dir);
 
-    const validation = validateOutput(outputPath);
+    const outputContent = readFileSafe(outputPath);
+    if (!outputContent) {
+      console.error('[second-opinion] Codex produced no output file.');
+      process.exit(EXIT_CODEX_ERROR);
+    }
+
+    const validation = validateOutput(outputContent);
     if (!validation.valid) {
       console.error(`[second-opinion] Validation failed:\n${validation.errors.map(e => `  - ${e}`).join('\n')}`);
       process.exit(EXIT_VALIDATION);
     }
 
+    // Print validated JSON to stdout — this is the result
+    console.log(outputContent);
     console.error(`[second-opinion] Opinion generated successfully.`);
     process.exit(EXIT_SUCCESS);
   } catch (err) {
