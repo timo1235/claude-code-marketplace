@@ -165,6 +165,21 @@ Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type step-review --st
 
 `approved` → continue. `needs_changes` → fix + re-review (max 3). `rejected` → escalate.
 
+### Phase 5c: Aggregate Implementation Results
+
+After ALL step implementations and reviews are complete, aggregate the results. The `codex-review.js` script does this automatically if `impl-result.json` is missing, but you can also create it explicitly by reading all `step-N-result.json` files and writing `.task/impl-result.json`:
+
+```json
+{
+  "status": "complete|partial|failed",
+  "has_ui_changes": true|false,
+  "steps_completed": [1, 2, 3],
+  "files_changed": ["path/to/file.ts"],
+  "tests_written": ["path/to/test.ts"],
+  "notes": null
+}
+```
+
 ### Phase 6: Final Review
 
 Read `.task/pipeline-config.json` to get the current mode. Then:

@@ -121,6 +121,39 @@ function readJsonSafe(filePath) {
   }
 }
 
+/**
+ * Aggregate all step-N-result.json files into a combined impl-result.json.
+ * Returns the aggregated object, or null if no step results found.
+ */
+function aggregateStepResults(taskDir) {
+  const stepResults = [];
+  for (let n = 1; n <= 20; n++) {
+    const stepPath = path.join(taskDir, `step-${n}-result.json`);
+    const result = readJsonSafe(stepPath);
+    if (result) {
+      stepResults.push(result);
+    } else if (n > 1) {
+      break; // No more steps
+    }
+  }
+  if (stepResults.length === 0) return null;
+
+  const allComplete = stepResults.every(s => s.status === 'complete');
+  const anyFailed = stepResults.some(s => s.status === 'failed');
+  const hasUi = stepResults.some(s => s.has_ui_changes === true);
+  const filesChanged = [...new Set(stepResults.flatMap(s => s.files_changed || []))];
+  const testsWritten = [...new Set(stepResults.flatMap(s => s.tests_written || []))];
+
+  return {
+    status: anyFailed ? 'failed' : allComplete ? 'complete' : 'partial',
+    has_ui_changes: hasUi,
+    steps_completed: stepResults.map(s => s.step_id).filter(Boolean),
+    files_changed: filesChanged,
+    tests_written: testsWritten,
+    notes: stepResults.filter(s => s.notes).map(s => `Step ${s.step_id}: ${s.notes}`).join('\n') || null,
+  };
+}
+
 // --- Input Validation ---
 
 function validateInputs(type, taskDir, pluginRoot, mode) {
@@ -153,7 +186,16 @@ function validateInputs(type, taskDir, pluginRoot, mode) {
     }
     case 'final-review': {
       const implResult = path.join(taskDir, 'impl-result.json');
-      if (!fs.existsSync(implResult)) errors.push('Missing required input: .task/impl-result.json');
+      if (!fs.existsSync(implResult)) {
+        // Auto-aggregate from step-N-result.json files
+        const aggregated = aggregateStepResults(taskDir);
+        if (aggregated) {
+          fs.writeFileSync(implResult, JSON.stringify(aggregated, null, 2), 'utf8');
+          console.error('[codex-review] Auto-aggregated impl-result.json from step results.');
+        } else {
+          errors.push('Missing required input: .task/impl-result.json (and no step-N-result.json files found to aggregate)');
+        }
+      }
       break;
     }
   }
