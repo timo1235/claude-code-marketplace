@@ -74,11 +74,15 @@ Before implementing, check if a `CLAUDE.md` file exists in the project root. If 
 
 Think carefully before writing any code. For each file you modify, first read it and understand the existing patterns.
 
-1. **Read the plan** — Understand ALL steps for context, but focus on your `step_id`
+1. **Read the plan** — Understand ALL steps for context, but focus on your `step_id`. Pay special attention to:
+   - `changes` array — per-file change descriptions with implementation details
+   - `data_flow` — how data moves through this step
+   - `details` fields — pseudocode, function signatures, component structure
 2. **Read prior step results** — If `step_id > 1`, read `.task/step-{1..N-1}-result.json` to understand what was already done
-3. **Plan your changes** — Before editing, identify exactly which files and functions need changes
+3. **Plan your changes** — Before editing, verify the plan's details against the actual code. The plan provides the architecture; adapt to the real codebase if needed. If the plan is missing `changes` or `data_flow` for your step, set status to `blocked` with reason "Plan missing implementation details for step N" — do NOT guess the architecture.
 4. **Implement the step:**
    - Read the existing code that will be modified
+   - Follow the plan's `changes` and `data_flow` descriptions
    - Make the changes for THIS step only
    - Write/update tests
 5. **Write step-N-result.json** — Summarize what you did

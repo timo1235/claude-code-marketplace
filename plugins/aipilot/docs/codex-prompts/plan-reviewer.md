@@ -92,6 +92,13 @@ If the requirements are ambiguous and you cannot review the plan without user in
 - Are tests planned for all new logic?
 - Are migration/data concerns addressed?
 
+### Implementation Detail
+- Does each step have a `changes` array with per-file change descriptions?
+- Are the `details` fields specific enough for an implementer to write code without guessing the architecture?
+- Does `data_flow` describe how data moves through the step (inputs → transformations → outputs)?
+- Are function signatures, component props, API contracts, and conditional logic described where relevant?
+- Missing or vague implementation details are a `major` finding under `completeness`.
+
 ### Feasibility
 - Do the referenced files actually exist (or are correctly marked as "create")?
 - Are the proposed changes compatible with the existing codebase patterns?

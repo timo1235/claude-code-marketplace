@@ -53,7 +53,7 @@ Apply the mode when designing the plan: adjust step complexity, test planning, a
 
 ### `.task/plan.md`
 
-Write a user-friendly, scannable markdown document. NO code blocks, NO file paths, NO technical details — those belong in `plan.json`. The user should understand the plan at a glance. Structure:
+Write a user-friendly, scannable markdown document. The user should understand the plan at a glance without reading JSON. Keep it concise but informative — include key technical decisions and the "why" behind the approach.
 
 <output_format>
 
@@ -64,18 +64,18 @@ Write a user-friendly, scannable markdown document. NO code blocks, NO file path
 [1-2 sentences restating the requirement in plain language]
 
 ## Analysis
-[What you found — bullet points, plain language, no code]
+[What you found — bullet points, key findings from codebase exploration]
 
 ## Approach
-[High-level strategy in 2-3 sentences — why this approach]
+[High-level strategy in 2-3 sentences — why this approach, what alternatives were considered]
 
 ## Steps
 
 ### Step 1: [Title]
-[1-2 sentences describing what happens in this step]
+[2-4 sentences: what changes, which components are affected, key logic]
 
 ### Step 2: [Title]
-[1-2 sentences describing what happens in this step]
+[2-4 sentences: what changes, which components are affected, key logic]
 
 ## UI Changes
 [If applicable — describe what the user will see differently. "None" if no UI changes]
@@ -86,11 +86,11 @@ Write a user-friendly, scannable markdown document. NO code blocks, NO file path
 
 </output_format>
 
-All technical details (file paths, function names, code specifics, test files) go ONLY in `plan.json`.
+The detailed implementation blueprint (pseudocode, data flow, per-file changes) goes in `plan.json`.
 
 ### `.task/plan.json`
 
-Write a structured JSON file:
+Write a detailed structured JSON file. This is the **implementation blueprint** — the implementer agent relies on this to know exactly what to build. Be specific and thorough.
 
 <output_format>
 
@@ -104,9 +104,17 @@ Write a structured JSON file:
     {
       "id": 1,
       "title": "Step title",
-      "description": "What to do",
+      "description": "Detailed description of what this step accomplishes and why",
       "files": ["path/to/file.ts"],
       "action": "create|modify|delete",
+      "changes": [
+        {
+          "file": "path/to/file.ts",
+          "description": "What to change in this specific file",
+          "details": "Concrete implementation instructions: function signatures, component structure, logic flow, state changes. Use pseudocode where helpful."
+        }
+      ],
+      "data_flow": "How data moves through this step: inputs → transformations → outputs. Include prop passing, API calls, state updates.",
       "tests": ["path/to/test.ts"],
       "depends_on": []
     }
@@ -121,6 +129,16 @@ Write a structured JSON file:
 ```
 
 </output_format>
+
+#### Step detail guidelines
+
+The `changes` array and `data_flow` field are the core of the plan. They must give the implementer enough information to write code without guessing the architecture:
+
+- **`changes[].details`**: Include function/method signatures, component props, database fields, API request/response shapes, conditional logic, error handling approach. Use pseudocode for complex logic.
+- **`data_flow`**: Describe the full path: user action → frontend handler → API call → backend processing → response → UI update. For pure backend/frontend changes, describe the relevant portion.
+- **`description`**: High-level summary tying the changes together — the "what and why" of this step.
+
+**All three fields (`changes`, `data_flow`, `description`) are required for every step.** The plan reviewer will reject plans with missing or vague implementation details.
 
 ## Project Rules (CLAUDE.md)
 
@@ -147,10 +165,10 @@ Before planning, check if a `CLAUDE.md` file exists in the project root. If it d
 - Never exceed 5 steps. If the task seems to need more, group related changes into a single step.
 
 ### plan.md Formatting
-- plan.md must be **user-friendly and scannable**: Clear structure, short descriptions, no code blocks.
-- The user should understand what will happen **at a glance** without reading code.
-- Code details, exact file paths, and technical specifics belong in `plan.json`, not in `plan.md`.
-- Use bullet points, keep descriptions to 1-2 sentences per step.
+- plan.md must be **user-friendly and scannable**: Clear structure, concise descriptions. No code blocks.
+- The user should understand what will happen **at a glance**.
+- Technical context (component names, key decisions) is OK in plan.md. Pseudocode and per-file details belong in `plan.json`.
+- Use bullet points, keep step descriptions to 2-4 sentences.
 
 ### General
 - MUST read existing code before planning. Never plan changes to code you haven't read.
@@ -161,7 +179,7 @@ Before planning, check if a `CLAUDE.md` file exists in the project root. If it d
 - MUST order steps by dependency — no step should reference work from a later step.
 - If this is a **revision** after review, incorporate ALL review findings. Don't ignore any.
 - Do NOT interact with the user. Write your outputs and finish.
-- Do NOT write any code. Only plan.
+- Do NOT write implementation code to files. Only plan. Pseudocode in plan.json is encouraged.
 - Use the Write tool to create output files, never Bash echo/cat.
 
 </rules>
