@@ -1,39 +1,5 @@
 # Claude Code Marketplace - Development Guide
 
-## Important: Development Location
-
-This repo MUST live under `~/code/claude-code-marketplace/`, NOT under `~/.claude/plugins/marketplaces/`.
-The `~/.claude/plugins/marketplaces/` directory is managed by Claude Code and scanned at startup.
-If the source repo lives there, plugins get loaded twice (installed + source), causing duplicate
-hooks, CPU spikes, and broken behavior.
-
-## Local Testing
-
-Test a plugin locally without installing it:
-
-```bash
-claude --plugin-dir ~/code/claude-code-marketplace/plugins/aipilot
-```
-
-This loads the plugin directly from source. Restart Claude Code to pick up changes.
-
-## Publishing Changes
-
-After committing and pushing changes:
-
-```bash
-claude plugin update aipilot@timo1235-marketplace
-```
-
-Or reinstall if update doesn't pick up changes:
-
-```bash
-claude plugin uninstall aipilot@timo1235-marketplace
-claude plugin install aipilot@timo1235-marketplace
-```
-
-Never edit files directly in `~/.claude/plugins/cache/`.
-
 ## Project Structure
 
 ```
@@ -48,6 +14,7 @@ plugins/
     hooks/            # Hook scripts (optional)
     CLAUDE.md         # Plugin-specific instructions
     README.md         # Plugin documentation
+reference/            # Reference plugins for analysis (gitignored)
 ```
 
 ## Path Resolution
@@ -62,3 +29,48 @@ plugins/
 2. Add `.claude-plugin/plugin.json` with plugin metadata
 3. Register the plugin in `.claude-plugin/marketplace.json`
 4. Update the README plugin table
+
+## Development & Contributing
+
+### Repository Location
+
+Clone this repo to a regular project directory (e.g. alongside other projects), **not** inside
+`~/.claude/plugins/marketplaces/`. That directory is managed by Claude Code and scanned at startup.
+If the source repo lives there, plugins get loaded twice (installed copy + source copy), causing
+duplicate hooks, CPU spikes, and broken behavior.
+
+### Local Testing
+
+Test a plugin locally without installing it using the `--plugin-dir` flag:
+
+```bash
+claude --plugin-dir /path/to/this-repo/plugins/<plugin-name>
+```
+
+This loads the plugin directly from source. Restart Claude Code to pick up changes.
+Multiple plugins can be loaded at once by repeating the flag.
+
+### Publishing Changes
+
+After committing and pushing:
+
+```bash
+# Preferred: update installed plugin to latest
+claude plugin update <plugin>@timo1235-marketplace
+
+# Alternative: full reinstall if update doesn't pick up changes
+claude plugin uninstall <plugin>@timo1235-marketplace
+claude plugin install <plugin>@timo1235-marketplace
+```
+
+Never edit files directly in `~/.claude/plugins/cache/`.
+
+### OpenAI Structured Output Schemas
+
+Schemas under `docs/schemas/` are used by Codex CLI via `--output-schema`. They must conform to
+OpenAI Structured Output restrictions:
+
+- Every `object` must have `"additionalProperties": false`
+- All properties must be listed in `required` (use `"type": ["string", "null"]` for optional fields)
+- No `if`/`then`/`else` constructs
+- `$ref` and `$defs` are supported
