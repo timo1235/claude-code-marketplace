@@ -4,7 +4,8 @@
   "title": "Final Review",
   "description": "Schema for Codex final review output (.task/code-review.json)",
   "type": "object",
-  "required": ["status", "summary", "plan_adherence", "findings", "tests_review", "checklist"],
+  "required": ["status", "summary", "plan_adherence", "findings", "tests_review", "checklist", "verdict"],
+  "additionalProperties": false,
   "properties": {
     "status": {
       "type": "string",
@@ -13,23 +14,24 @@
     },
     "summary": {
       "type": "string",
-      "minLength": 10,
       "description": "One-paragraph overall assessment"
     },
     "plan_adherence": {
       "type": "object",
       "required": ["steps_verified", "deviations"],
+      "additionalProperties": false,
       "properties": {
         "steps_verified": {
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["step_id", "implemented", "correct"],
+            "required": ["step_id", "implemented", "correct", "notes"],
+            "additionalProperties": false,
             "properties": {
               "step_id": { "type": "integer" },
               "implemented": { "type": "boolean" },
               "correct": { "type": "boolean" },
-              "notes": { "type": "string" }
+              "notes": { "type": "string", "description": "Notes (empty string if none)" }
             }
           }
         },
@@ -44,7 +46,8 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["severity", "category", "description", "recommendation"],
+        "required": ["severity", "category", "file", "line", "description", "recommendation"],
+        "additionalProperties": false,
         "properties": {
           "severity": {
             "type": "string",
@@ -60,21 +63,18 @@
             ]
           },
           "file": {
-            "type": "string",
-            "description": "Relative file path"
+            "type": ["string", "null"],
+            "description": "Relative file path (null if not applicable)"
           },
           "line": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Line number (0 if not applicable)"
+            "type": ["integer", "null"],
+            "description": "Line number (null if not applicable)"
           },
           "description": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           },
           "recommendation": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         }
       }
@@ -82,6 +82,7 @@
     "tests_review": {
       "type": "object",
       "required": ["coverage_adequate", "missing_tests", "test_quality"],
+      "additionalProperties": false,
       "properties": {
         "coverage_adequate": {
           "type": "boolean"
@@ -104,6 +105,7 @@
         "code_quality", "concurrency", "logging", "dependencies",
         "api_design", "backward_compat", "testing", "over_engineering"
       ],
+      "additionalProperties": false,
       "properties": {
         "security": { "$ref": "#/$defs/checklistItem" },
         "error_handling": { "$ref": "#/$defs/checklistItem" },
@@ -128,6 +130,7 @@
     "checklistItem": {
       "type": "object",
       "required": ["pass", "notes"],
+      "additionalProperties": false,
       "properties": {
         "pass": {
           "type": "boolean",

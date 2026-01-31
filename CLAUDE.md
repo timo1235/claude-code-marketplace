@@ -28,3 +28,14 @@ plugins/
 2. Add `.claude-plugin/plugin.json` with plugin metadata
 3. Register the plugin in `.claude-plugin/marketplace.json`
 4. Update the README plugin table
+
+## Updating Plugins During Local Development
+
+After changing plugin source files, update the cached version with:
+
+```bash
+claude plugin uninstall <plugin>@timo1235-marketplace
+claude plugin install <plugin>@timo1235-marketplace
+```
+
+Never edit files directly in `~/.claude/plugins/cache/`.

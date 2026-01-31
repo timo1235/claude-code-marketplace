@@ -4,11 +4,11 @@
   "title": "Step Review",
   "description": "Schema for per-step Codex review output (.task/step-N-review.json)",
   "type": "object",
-  "required": ["step_id", "status", "summary", "step_adherence", "findings"],
+  "required": ["step_id", "status", "summary", "step_adherence", "findings", "verdict"],
+  "additionalProperties": false,
   "properties": {
     "step_id": {
       "type": "integer",
-      "minimum": 1,
       "description": "The step number being reviewed"
     },
     "status": {
@@ -18,12 +18,12 @@
     },
     "summary": {
       "type": "string",
-      "minLength": 10,
       "description": "One-paragraph assessment of this step"
     },
     "step_adherence": {
       "type": "object",
-      "required": ["implemented", "correct"],
+      "required": ["implemented", "correct", "notes"],
+      "additionalProperties": false,
       "properties": {
         "implemented": {
           "type": "boolean",
@@ -35,7 +35,7 @@
         },
         "notes": {
           "type": "string",
-          "description": "Additional adherence notes"
+          "description": "Additional adherence notes (empty string if none)"
         }
       }
     },
@@ -43,7 +43,8 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["severity", "category", "description", "recommendation"],
+        "required": ["severity", "category", "file", "line", "description", "recommendation"],
+        "additionalProperties": false,
         "properties": {
           "severity": {
             "type": "string",
@@ -58,21 +59,18 @@
             ]
           },
           "file": {
-            "type": "string",
-            "description": "Relative file path"
+            "type": ["string", "null"],
+            "description": "Relative file path (null if not applicable)"
           },
           "line": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Line number (0 if not applicable)"
+            "type": ["integer", "null"],
+            "description": "Line number (null if not applicable)"
           },
           "description": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           },
           "recommendation": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         }
       }

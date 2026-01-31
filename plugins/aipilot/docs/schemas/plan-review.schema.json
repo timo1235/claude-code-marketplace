@@ -4,7 +4,8 @@
   "title": "Plan Review",
   "description": "Schema for Codex plan review output (.task/plan-review.json)",
   "type": "object",
-  "required": ["status", "summary", "findings", "requirements_coverage"],
+  "required": ["status", "summary", "findings", "requirements_coverage", "needs_clarification", "clarification_questions", "verdict"],
+  "additionalProperties": false,
   "properties": {
     "status": {
       "type": "string",
@@ -13,14 +14,14 @@
     },
     "summary": {
       "type": "string",
-      "minLength": 10,
       "description": "One-paragraph overall assessment"
     },
     "findings": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["severity", "category", "description", "recommendation"],
+        "required": ["severity", "category", "step_id", "description", "recommendation"],
+        "additionalProperties": false,
         "properties": {
           "severity": {
             "type": "string",
@@ -36,16 +37,14 @@
             ]
           },
           "step_id": {
-            "type": "integer",
-            "description": "Which plan step this finding relates to (optional)"
+            "type": ["integer", "null"],
+            "description": "Which plan step this finding relates to (null if general)"
           },
           "description": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           },
           "recommendation": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         }
       }
@@ -53,6 +52,7 @@
     "requirements_coverage": {
       "type": "object",
       "required": ["fully_covered", "partially_covered", "missing"],
+      "additionalProperties": false,
       "properties": {
         "fully_covered": {
           "type": "array",
@@ -75,7 +75,7 @@
     "clarification_questions": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Questions for the user (only when needs_clarification is true)"
+      "description": "Questions for the user (empty array if none)"
     },
     "verdict": {
       "type": "string",
