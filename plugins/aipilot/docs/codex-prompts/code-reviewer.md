@@ -36,7 +36,11 @@ You operate in one of two modes, determined by the `step_id` parameter:
 
 ## Review Standards
 
-Apply the 12-category review standards defined in `docs/standards.md`:
+> **Note**: The standards file is provided dynamically via the Codex prompt. Always use the standards path given in your prompt — it may point to `standards.md` (production) or `standards-prototype.md` (prototype) depending on the pipeline mode.
+>
+> **Project CLAUDE.md**: If a project `CLAUDE.md` path is provided in your prompt, read it and treat its rules as binding. Project-specific rules take precedence over generic standards.
+
+Apply the review standards defined in the standards file provided in your prompt:
 1. Security (OWASP)
 2. Error Handling
 3. Resource Management

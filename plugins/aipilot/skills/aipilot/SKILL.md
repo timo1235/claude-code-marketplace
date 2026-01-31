@@ -28,6 +28,18 @@ If it fails → ABORT pipeline and tell the user why.
 
 Do NOT create `.task/` yourself. Do NOT write `state.json`. The script handles this.
 
+### Step 1b: Detect pipeline mode
+
+Determine the pipeline mode from the user's input:
+- If the user wrote **"production"** or **"prod"** (case-insensitive) anywhere in their message → mode = `production`
+- Otherwise → mode = `prototype` (default)
+
+Write `.task/pipeline-config.json` using the Write tool:
+```json
+{ "mode": "prototype" }
+```
+(or `"production"` if detected)
+
 ### Step 2: Create task chain
 
 Create exactly 4 tasks using `TaskCreate`. Use the REAL task IDs returned by `TaskCreate` — do NOT invent IDs.
@@ -71,17 +83,25 @@ while pipeline not complete:
 
 ### Phase 1: Analyze & Plan
 
+Read `.task/pipeline-config.json` to get the current mode. Then:
+
 ```
-Task({ subagent_type: "aipilot:analyzer", model: "opus", prompt: "<task_description>\n{USER_TASK}\n</task_description>\n\nProject: ${CLAUDE_PROJECT_DIR}", description: "Analyze and plan" })
+Task({ subagent_type: "aipilot:analyzer", model: "opus", prompt: "<task_description>\n{USER_TASK}\n</task_description>\n\n<pipeline_mode>{MODE}</pipeline_mode>\n\nProject: ${CLAUDE_PROJECT_DIR}", description: "Analyze and plan" })
 ```
+
+Replace `{MODE}` with the value from `pipeline-config.json` (e.g. `prototype` or `production`).
 
 Do NOT summarize output. Main Loop picks up Phase 2.
 
 ### Phase 2: Codex Plan Review
 
+Read `.task/pipeline-config.json` to get the current mode. Then:
+
 ```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type plan --plugin-root ${CLAUDE_PLUGIN_ROOT} --project-dir ${CLAUDE_PROJECT_DIR}")
+Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type plan --plugin-root ${CLAUDE_PLUGIN_ROOT} --project-dir ${CLAUDE_PROJECT_DIR} --mode {MODE}")
 ```
+
+Replace `{MODE}` with the value from `pipeline-config.json`.
 
 Read `.task/plan-review.json`:
 
@@ -94,8 +114,10 @@ Read `.task/plan-review.json`:
 
 ### Phase 3: Plan Revision
 
+Read `.task/pipeline-config.json` to get the current mode. Then:
+
 ```
-Task({ subagent_type: "aipilot:analyzer", model: "opus", prompt: "<task_description>\n{USER_TASK}\n</task_description>\n\n<review_findings>\n{FINDINGS}\n</review_findings>\n\nProject: ${CLAUDE_PROJECT_DIR}", description: "Revise plan" })
+Task({ subagent_type: "aipilot:analyzer", model: "opus", prompt: "<task_description>\n{USER_TASK}\n</task_description>\n\n<review_findings>\n{FINDINGS}\n</review_findings>\n\n<pipeline_mode>{MODE}</pipeline_mode>\n\nProject: ${CLAUDE_PROJECT_DIR}", description: "Revise plan" })
 ```
 
 After revision → create NEW Phase 2 + Phase 3 tasks to re-review. Max 3 iterations.
@@ -121,22 +143,28 @@ TaskCreate: "UI verification"       → blockedBy final review
 
 ### Phase 5a: Implement Step N
 
+Read `.task/pipeline-config.json` to get the current mode. Then:
+
 ```
-Task({ subagent_type: "aipilot:implementer", model: "opus", prompt: "<step_id>\nN\n</step_id>\n\nProject: ${CLAUDE_PROJECT_DIR}", description: "Implement step N" })
+Task({ subagent_type: "aipilot:implementer", model: "opus", prompt: "<step_id>\nN\n</step_id>\n\n<pipeline_mode>{MODE}</pipeline_mode>\n\nProject: ${CLAUDE_PROJECT_DIR}", description: "Implement step N" })
 ```
 
 ### Phase 5b: Review Step N
 
+Read `.task/pipeline-config.json` to get the current mode. Then:
+
 ```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type step-review --step-id N --plugin-root ${CLAUDE_PLUGIN_ROOT} --project-dir ${CLAUDE_PROJECT_DIR}")
+Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type step-review --step-id N --plugin-root ${CLAUDE_PLUGIN_ROOT} --project-dir ${CLAUDE_PROJECT_DIR} --mode {MODE}")
 ```
 
 `approved` → continue. `needs_changes` → fix + re-review (max 3). `rejected` → escalate.
 
 ### Phase 6: Final Review
 
+Read `.task/pipeline-config.json` to get the current mode. Then:
+
 ```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type final-review --plugin-root ${CLAUDE_PLUGIN_ROOT} --project-dir ${CLAUDE_PROJECT_DIR}")
+Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type final-review --plugin-root ${CLAUDE_PLUGIN_ROOT} --project-dir ${CLAUDE_PROJECT_DIR} --mode {MODE}")
 ```
 
 ### Phase 7: UI Verification (only if `has_ui_changes: true`)

@@ -173,9 +173,14 @@ function computeGuidance() {
     ].join('\n');
   }
 
+  // Read pipeline mode
+  const pipelineConfig = readJsonSafe(path.join(taskDir, 'pipeline-config.json'));
+  const pipelineMode = (pipelineConfig && pipelineConfig.mode) || 'prototype';
+
   const detected = detectPhase(taskDir);
   const messages = [];
 
+  messages.push(`[PIPELINE] Mode: ${pipelineMode}`);
   messages.push(`[PIPELINE] ${detected.phase}`);
   if (detected.detail) {
     messages.push(`[PIPELINE] ${detected.detail}`);

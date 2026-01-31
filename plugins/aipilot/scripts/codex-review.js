@@ -5,7 +5,7 @@
  *
  * Usage:
  *   node codex-review.js --type preflight|plan|step-review|final-review \
- *     --project-dir /path --plugin-root /path [--step-id N] [--resume] [--changes-summary "..."]
+ *     --project-dir /path --plugin-root /path [--step-id N] [--resume] [--changes-summary "..."] [--mode prototype|production]
  *
  * Types:
  *   preflight     - Verify Codex CLI is available and working
@@ -17,6 +17,7 @@
  *   --plugin-root   Plugin root directory (for resolving schemas/standards)
  *   --resume        Resume previous Codex session for this review type
  *   --changes-summary  Summary of changes for focused re-reviews
+ *   --mode          Pipeline mode: "prototype" (default) or "production"
  *
  * Output:
  *   JSON events on stdout (one per line): start, invoking_codex, session_expired, error, complete
@@ -67,6 +68,7 @@ function parseArgs() {
     stepId: null,
     resume: false,
     changesSummary: null,
+    mode: 'prototype',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -88,6 +90,9 @@ function parseArgs() {
         break;
       case '--changes-summary':
         result.changesSummary = args[++i];
+        break;
+      case '--mode':
+        result.mode = args[++i] === 'production' ? 'production' : 'prototype';
         break;
     }
   }
@@ -117,7 +122,7 @@ function readJsonSafe(filePath) {
 
 // --- Input Validation ---
 
-function validateInputs(type, taskDir, pluginRoot) {
+function validateInputs(type, taskDir, pluginRoot, mode) {
   const errors = [];
 
   // Check .task/ directory exists
@@ -153,7 +158,7 @@ function validateInputs(type, taskDir, pluginRoot) {
   }
 
   // Check standards file
-  const standardsPath = getStandardsPath(pluginRoot);
+  const standardsPath = getStandardsPath(pluginRoot, mode);
   if (standardsPath && !fs.existsSync(standardsPath)) {
     // Warning only, not a hard error
     console.error(`[codex-review] Warning: standards.md not found at ${standardsPath}`);
@@ -257,18 +262,32 @@ function getSchemaPath(pluginRoot, type) {
   return path.join(pluginRoot, 'docs', 'schemas', schemaFile);
 }
 
-function getStandardsPath(pluginRoot) {
+function getStandardsPath(pluginRoot, mode) {
   if (!pluginRoot) return null;
+  if (mode === 'prototype') {
+    const prototypePath = path.join(pluginRoot, 'docs', 'standards-prototype.md');
+    if (fs.existsSync(prototypePath)) return prototypePath;
+    // Fallback to production standards if prototype file doesn't exist
+  }
   return path.join(pluginRoot, 'docs', 'standards.md');
 }
 
 // --- Prompt Building ---
 
-function buildPromptFilePaths(taskDir, projectDir, pluginRoot, type, stepId, changesSummary) {
+function buildPromptFilePaths(taskDir, projectDir, pluginRoot, type, stepId, changesSummary, mode) {
   const parts = [];
 
+  // Pipeline mode context
+  parts.push(`Pipeline mode: ${mode || 'prototype'}`);
+
+  // Project CLAUDE.md — project-specific rules take precedence
+  const claudeMdPath = path.join(projectDir, 'CLAUDE.md');
+  if (fs.existsSync(claudeMdPath)) {
+    parts.push(`Project rules are defined in: ${claudeMdPath}\nThese project-specific rules take precedence over generic standards. Read and follow them.`);
+  }
+
   // Standards reference
-  const standardsPath = getStandardsPath(pluginRoot);
+  const standardsPath = getStandardsPath(pluginRoot, mode);
   if (standardsPath && fs.existsSync(standardsPath)) {
     parts.push(`Review standards are defined in: ${standardsPath}`);
   }
@@ -532,10 +551,10 @@ function runPreflight(codexPath) {
 // --- Main ---
 
 async function main() {
-  const { type, projectDir, pluginRoot, stepId, resume, changesSummary } = parseArgs();
+  const { type, projectDir, pluginRoot, stepId, resume, changesSummary, mode } = parseArgs();
 
   if (!type || !VALID_TYPES.includes(type)) {
-    console.error('Usage: codex-review.js --type preflight|plan|step-review|final-review --project-dir /path --plugin-root /path [--step-id N] [--resume] [--changes-summary "..."]');
+    console.error('Usage: codex-review.js --type preflight|plan|step-review|final-review --project-dir /path --plugin-root /path [--step-id N] [--resume] [--changes-summary "..."] [--mode prototype|production]');
     process.exit(EXIT_VALIDATION);
   }
 
@@ -569,7 +588,7 @@ async function main() {
   const sessionMarkerPath = getSessionMarker(taskDir, type, stepId);
 
   // Input validation before starting Codex
-  const inputErrors = validateInputs(type, taskDir, resolvedPluginRoot);
+  const inputErrors = validateInputs(type, taskDir, resolvedPluginRoot, mode);
   if (inputErrors.length > 0) {
     emitEvent('error', { message: 'Input validation failed', errors: inputErrors });
     console.error(`[codex-review] Input validation failed:\n${inputErrors.map(e => `  - ${e}`).join('\n')}`);
@@ -577,9 +596,9 @@ async function main() {
     process.exit(EXIT_VALIDATION);
   }
 
-  emitEvent('start', { type, stepId: stepId || null, outputPath, resume });
+  emitEvent('start', { type, stepId: stepId || null, outputPath, resume, mode });
 
-  console.error(`[codex-review] Starting ${type} review${stepId ? ` (step ${stepId})` : ''} using Codex at ${codexPath}`);
+  console.error(`[codex-review] Starting ${type} review${stepId ? ` (step ${stepId})` : ''} [mode=${mode}] using Codex at ${codexPath}`);
 
   const MAX_RETRIES = 1; // One retry for session-expired
   let attempt = 0;
@@ -587,7 +606,7 @@ async function main() {
 
   while (attempt <= MAX_RETRIES) {
     try {
-      const prompt = buildPromptFilePaths(taskDir, dir, resolvedPluginRoot, type, stepId, changesSummary);
+      const prompt = buildPromptFilePaths(taskDir, dir, resolvedPluginRoot, type, stepId, changesSummary, mode);
 
       await runCodex(codexPath, prompt, outputPath, schemaPath, dir, sessionMarkerPath, currentResume);
 

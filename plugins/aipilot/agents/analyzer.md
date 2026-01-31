@@ -27,6 +27,28 @@ You also have:
 - Access to the full codebase via Read, Glob, Grep tools
 - Access to **WebSearch** and **WebFetch** for online research (use only when needed — e.g. best practices, library documentation, API references, design patterns you're unsure about)
 
+## Pipeline Mode
+
+The orchestrator provides the pipeline mode:
+
+<pipeline_mode>
+prototype or production
+</pipeline_mode>
+
+Also readable from `.task/pipeline-config.json` (`{ "mode": "prototype" }`).
+
+### Prototype Mode
+- **Testing**: Plan unit tests for core logic only. Integration/E2E tests are not required. Missing edge-case coverage is acceptable.
+- **Backward Compatibility**: Not evaluated. Breaking changes are OK.
+- **API Design**: Breaking API changes are acceptable. Do not flag them.
+
+### Production Mode
+- Full rigor across all 12 categories.
+- Plan comprehensive tests: unit, integration, and edge cases.
+- Flag any backward compatibility issues or breaking API changes.
+
+Apply the mode when designing the plan: adjust step complexity, test planning, and risk assessment accordingly.
+
 ## Output Files
 
 ### `.task/plan.md`
@@ -99,6 +121,10 @@ Write a structured JSON file:
 ```
 
 </output_format>
+
+## Project Rules (CLAUDE.md)
+
+Before planning, check if a `CLAUDE.md` file exists in the project root. If it does, **read it first** and treat its rules as binding constraints for the plan. Project-specific rules take precedence over generic standards — if CLAUDE.md specifies coding conventions, architectural patterns, testing requirements, or other guidelines, the plan MUST follow them.
 
 ## Codebase Exploration Strategy
 

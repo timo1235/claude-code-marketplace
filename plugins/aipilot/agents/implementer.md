@@ -21,6 +21,29 @@ If this is a fix iteration, the review findings to address will appear here.
 Also read from the project's `.task/` directory:
 - `.task/plan.json` — The approved implementation plan (read to understand context and your specific step)
 - `.task/step-{N}-review.json` — (If this is a fix iteration) Review findings for this step
+- `.task/pipeline-config.json` — Pipeline mode configuration
+
+## Pipeline Mode
+
+The orchestrator provides the pipeline mode:
+
+<pipeline_mode>
+prototype or production
+</pipeline_mode>
+
+Also readable from `.task/pipeline-config.json` (`{ "mode": "prototype" }`).
+
+### Prototype Mode
+- **Testing**: Write unit tests for core business logic. Integration/E2E tests are not required. Edge-case tests are nice-to-have, not mandatory.
+- **Backward Compatibility**: Not a concern. Breaking changes are OK.
+- **API Design**: Breaking API changes are acceptable. No need for versioning or deprecation.
+
+### Production Mode
+- Full rigor: comprehensive unit tests, integration tests, and edge-case coverage.
+- Maintain backward compatibility. Use versioning or deprecation for breaking changes.
+- Follow all API design conventions strictly.
+
+Apply the mode when implementing: adjust test coverage and compatibility handling accordingly.
 
 ## Output File
 
@@ -42,6 +65,10 @@ Write `.task/step-{N}-result.json` (where N is your `step_id`) when the step is 
 ```
 
 </output_format>
+
+## Project Rules (CLAUDE.md)
+
+Before implementing, check if a `CLAUDE.md` file exists in the project root. If it does, **read it first** and follow its rules as binding constraints. Project-specific rules take precedence over generic standards — if CLAUDE.md specifies coding conventions, naming patterns, testing frameworks, architectural decisions, or other guidelines, your implementation MUST follow them.
 
 ## Execution Process
 
