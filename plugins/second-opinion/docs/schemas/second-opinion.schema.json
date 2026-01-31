@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source", "problem_summary", "analysis", "suggestions", "root_cause_hypothesis"],
+  "properties": {
+    "source": {
+      "type": "string",
+      "enum": ["codex", "opus"]
+    },
+    "problem_summary": {
+      "type": "string"
+    },
+    "analysis": {
+      "type": "string"
+    },
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["approach", "reasoning", "confidence"],
+        "properties": {
+          "approach": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          }
+        }
+      }
+    },
+    "root_cause_hypothesis": {
+      "type": "string"
+    }
+  }
+}

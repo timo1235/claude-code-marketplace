@@ -15,6 +15,11 @@
       "name": "aipilot",
       "source": "./plugins/aipilot",
       "category": "productivity"
+    },
+    {
+      "name": "second-opinion",
+      "source": "./plugins/second-opinion",
+      "category": "productivity"
     }
   ]
 }

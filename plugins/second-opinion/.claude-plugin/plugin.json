@@ -1,0 +1,18 @@
+{
+  "name": "second-opinion",
+  "version": "1.0.0",
+  "description": "Get a second opinion from an alternative AI model (Codex CLI or Opus fallback) when stuck on a problem",
+  "author": {
+    "name": "Timo",
+    "url": "https://github.com/timo1235"
+  },
+  "license": "MIT",
+  "keywords": [
+    "second-opinion",
+    "debugging",
+    "codex",
+    "stuck-detection",
+    "alternative-perspective"
+  ],
+  "skills": "./skills/"
+}

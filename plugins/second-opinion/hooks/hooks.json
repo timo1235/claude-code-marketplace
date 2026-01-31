@@ -1,0 +1,15 @@
+{
+  "description": "Second-opinion hooks: stuck detection (advisory on PostToolUse)",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ${CLAUDE_PLUGIN_ROOT}/hooks/stuck-detector.js"
+          }
+        ]
+      }
+    ]
+  }
+}
