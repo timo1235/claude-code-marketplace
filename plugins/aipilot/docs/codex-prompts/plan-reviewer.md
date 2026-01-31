@@ -118,8 +118,8 @@ If the requirements are ambiguous and you cannot review the plan without user in
 
 ### Testing
 - Are test plans adequate for the changes?
-- Do test plans cover edge cases?
-- Are integration tests planned where needed?
+- **In prototype mode**: Unit tests for core business logic are sufficient. Do NOT flag missing integration tests, E2E tests, or edge-case tests as issues — these are optional in prototype mode.
+- **In production mode**: Are integration tests planned where needed? Do test plans cover edge cases?
 
 <rules>
 

@@ -156,11 +156,13 @@ For every review (step or final), systematically check:
 8. **Dependencies**: Justified, maintained, no vulnerabilities, minimal footprint
 9. **API Design**: RESTful conventions, contracts documented, pagination
 10. **Backward Compatibility**: No silent breaking changes, deprecation warnings
-11. **Testing**: Business logic tested, edge cases, deterministic, matching patterns
+11. **Testing**: Business logic tested, deterministic, matching patterns. **In prototype mode: unit tests for core logic are sufficient. Integration tests, E2E tests, and edge-case tests are NOT required — flag missing ones as `suggestion` only, never as `major` or `critical`.**
 12. **Over-Engineering**: Complexity matches problem, no premature abstractions
 
 For step reviews: check categories relevant to the step's changes.
 For final reviews: check ALL 12 categories and report in the `checklist` field.
+
+**Important**: The standards file provided in your prompt defines the active review mode. In `prototype` mode, apply relaxed severity for testing gaps — missing integration/E2E/edge-case tests must be `suggestion` severity, not `major` or `critical`.
 
 ## Additional Checks
 
