@@ -63,23 +63,11 @@ cmd_reset() {
 
   echo "Resetting pipeline artifacts in $TASK_DIR ..."
 
-  if [ ! -d "$TASK_DIR" ]; then
-    echo "No .task/ directory found. Creating it."
-    mkdir -p "$TASK_DIR"
-    echo "Pipeline reset complete. Ready for initialization."
-    exit 0
+  if [ -d "$TASK_DIR" ]; then
+    rm -rf "$TASK_DIR"
+    echo "Removed .task/ directory."
   fi
-
-  # Remove all pipeline artifacts
-  local count=0
-  for f in "$TASK_DIR"/*.json "$TASK_DIR"/*.md "$TASK_DIR"/.codex-session-* "$TASK_DIR"/codex_stderr.log; do
-    if [ -f "$f" ]; then
-      rm -f "$f"
-      count=$((count + 1))
-    fi
-  done
-
-  echo "Removed $count artifact(s)."
+  mkdir -p "$TASK_DIR"
   echo "Pipeline reset complete. Ready for a new run."
 }
 
@@ -325,20 +313,12 @@ cmd_init() {
   echo "Project: $PROJECT_DIR"
   echo ""
 
-  # Step 1: Reset
+  # Step 1: Reset — clean slate for new pipeline run
   if [ -d "$TASK_DIR" ]; then
-    local count=0
-    for f in "$TASK_DIR"/*.json "$TASK_DIR"/*.md "$TASK_DIR"/.codex-session-* "$TASK_DIR"/codex_stderr.log; do
-      if [ -f "$f" ]; then
-        rm -f "$f"
-        count=$((count + 1))
-      fi
-    done
-    echo "Reset: removed $count artifact(s)."
-  else
-    mkdir -p "$TASK_DIR"
-    echo "Reset: created .task/ directory."
+    rm -rf "$TASK_DIR"
+    echo "Reset: removed existing .task/ directory."
   fi
+  mkdir -p "$TASK_DIR"
 
   # Step 2: Preflight check
   echo ""
