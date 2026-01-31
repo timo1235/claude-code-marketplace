@@ -1,6 +1,6 @@
 ---
-name: pipeline
-description: Start the multi-AI pipeline. Opus plans, Codex reviews, User approves, Opus implements, Codex gates.
+name: aipilot
+description: Start the multi-AI pipeline. Opus plans, Codex reviews, User approves, Opus implements, Codex gates. Use when the user says "aipilot", "start aipilot", "pipeline", "start pipeline", or "plan and implement".
 plugin-scoped: true
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, AskUserQuestion, TaskCreate, TaskUpdate, TaskList, TaskGet
 ---
