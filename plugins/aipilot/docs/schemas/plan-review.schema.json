@@ -81,11 +81,5 @@
       "type": "string",
       "description": "What must change before approval (empty string if approved)"
     }
-  },
-  "if": {
-    "properties": { "status": { "const": "needs_clarification" } }
-  },
-  "then": {
-    "required": ["status", "summary", "findings", "requirements_coverage", "needs_clarification", "clarification_questions"]
   }
 }
