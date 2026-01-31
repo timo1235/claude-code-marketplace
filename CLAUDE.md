@@ -55,15 +55,22 @@ Multiple plugins can be loaded at once by repeating the flag.
 After committing and pushing:
 
 ```bash
-# Preferred: update installed plugin to latest
+# Step 1: Update the marketplace registry (pulls latest git state)
+claude plugin marketplace update timo1235-marketplace
+
+# Step 2: Update the plugin
 claude plugin update <plugin>@timo1235-marketplace
 
-# Alternative: full reinstall if update doesn't pick up changes
+# Alternative if update doesn't pick up changes: full reinstall
 claude plugin uninstall <plugin>@timo1235-marketplace
 claude plugin install <plugin>@timo1235-marketplace
 ```
 
-Never edit files directly in `~/.claude/plugins/cache/`.
+`plugin update` alone does NOT fetch new commits — it only checks the local marketplace cache.
+You must run `plugin marketplace update` first to sync the registry, then `plugin update` to
+install the new version.
+
+Never edit files directly in `~/.claude/plugins/cache/` or `~/.claude/plugins/marketplaces/`.
 
 ### OpenAI Structured Output Schemas
 
