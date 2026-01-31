@@ -213,26 +213,32 @@ const LOCK_STALE_MS = 10 * 60 * 1000; // Consider lock stale after 10 minutes
 function acquireLock(taskDir) {
   const lockPath = path.join(taskDir, '.codex-review.lock');
   try {
-    // Check for existing lock
+    // Check for existing lock and stale detection
     if (fs.existsSync(lockPath)) {
       const lockContent = readFileSafe(lockPath);
       if (lockContent) {
-        const lock = JSON.parse(lockContent);
-        const age = Date.now() - lock.timestamp;
-        // If lock is fresh, another Codex process is running
-        if (age < LOCK_STALE_MS) {
-          return { acquired: false, pid: lock.pid, age: Math.round(age / 1000) };
-        }
-        // Stale lock — remove it
-        console.error(`[codex-review] Removing stale lock (age: ${Math.round(age / 1000)}s, pid: ${lock.pid})`);
+        try {
+          const lock = JSON.parse(lockContent);
+          const age = Date.now() - lock.timestamp;
+          if (age < LOCK_STALE_MS) {
+            return { acquired: false, pid: lock.pid, age: Math.round(age / 1000) };
+          }
+          console.error(`[codex-review] Removing stale lock (age: ${Math.round(age / 1000)}s, pid: ${lock.pid})`);
+        } catch { /* corrupt lock, remove it */ }
+        try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
       }
     }
-    // Write lock
-    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, timestamp: Date.now() }), 'utf8');
+    // Atomic create — O_EXCL fails if file already exists
+    const fd = fs.openSync(lockPath, 'wx');
+    fs.writeSync(fd, JSON.stringify({ pid: process.pid, timestamp: Date.now() }));
+    fs.closeSync(fd);
     return { acquired: true };
-  } catch {
-    // If we can't manage locks, proceed anyway
-    return { acquired: true };
+  } catch (err) {
+    if (err.code === 'EEXIST') {
+      return { acquired: false, pid: 'unknown', age: 0 };
+    }
+    // Filesystem error — fail closed (don't proceed)
+    return { acquired: false, pid: 'unknown', age: 0 };
   }
 }
 

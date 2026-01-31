@@ -280,14 +280,16 @@ async function main() {
     process.exit(EXIT_LOCKED);
   }
 
-  // Temp files for Codex
-  const contextFilePath = path.join(tmpDir, `second-opinion-${hash}-context.md`);
-  const outputPath = path.join(tmpDir, `second-opinion-${hash}-output.json`);
+  // Per-run temp directory (isolated from other processes)
+  const runDir = fs.mkdtempSync(path.join(tmpDir, 'second-opinion-'));
+  const contextFilePath = path.join(runDir, 'context.md');
+  const outputPath = path.join(runDir, 'output.json');
 
   const cleanup = () => {
     releaseLock(lockPath);
     removeSafe(contextFilePath);
     removeSafe(outputPath);
+    try { fs.rmdirSync(runDir); } catch { /* ignore */ }
   };
 
   process.on('exit', cleanup);
