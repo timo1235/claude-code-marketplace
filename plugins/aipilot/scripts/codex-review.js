@@ -36,11 +36,12 @@ const path = require('path');
 
 // --- Constants ---
 
-const TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes
+const TIMEOUT_MS = 8 * 60 * 1000; // 8 minutes (reduced from 20 to prevent resource exhaustion)
 const EXIT_SUCCESS = 0;
 const EXIT_VALIDATION = 1;
 const EXIT_CODEX_ERROR = 2;
 const EXIT_TIMEOUT = 3;
+const EXIT_LOCKED = 4;
 
 const VALID_TYPES = ['preflight', 'plan', 'step-review', 'final-review'];
 
@@ -203,6 +204,41 @@ function findCodex() {
   }
 
   return null;
+}
+
+// --- Lockfile (prevent concurrent Codex processes) ---
+
+const LOCK_STALE_MS = 10 * 60 * 1000; // Consider lock stale after 10 minutes
+
+function acquireLock(taskDir) {
+  const lockPath = path.join(taskDir, '.codex-review.lock');
+  try {
+    // Check for existing lock
+    if (fs.existsSync(lockPath)) {
+      const lockContent = readFileSafe(lockPath);
+      if (lockContent) {
+        const lock = JSON.parse(lockContent);
+        const age = Date.now() - lock.timestamp;
+        // If lock is fresh, another Codex process is running
+        if (age < LOCK_STALE_MS) {
+          return { acquired: false, pid: lock.pid, age: Math.round(age / 1000) };
+        }
+        // Stale lock — remove it
+        console.error(`[codex-review] Removing stale lock (age: ${Math.round(age / 1000)}s, pid: ${lock.pid})`);
+      }
+    }
+    // Write lock
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: process.pid, timestamp: Date.now() }), 'utf8');
+    return { acquired: true };
+  } catch {
+    // If we can't manage locks, proceed anyway
+    return { acquired: true };
+  }
+}
+
+function releaseLock(taskDir) {
+  const lockPath = path.join(taskDir, '.codex-review.lock');
+  try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
 }
 
 // --- Session Management ---
@@ -595,6 +631,20 @@ async function main() {
     writeErrorResult(outputPath, inputErrors.join('; '), type);
     process.exit(EXIT_VALIDATION);
   }
+
+  // Prevent concurrent Codex processes (major cause of OOM/WSL crashes)
+  const lock = acquireLock(taskDir);
+  if (!lock.acquired) {
+    emitEvent('error', { message: `Another Codex review is already running (pid: ${lock.pid}, age: ${lock.age}s). Aborting to prevent resource exhaustion.` });
+    console.error(`[codex-review] BLOCKED: Another Codex process is running (pid: ${lock.pid}, started ${lock.age}s ago). Wait for it to finish.`);
+    process.exit(EXIT_LOCKED);
+  }
+
+  // Ensure lock is released on exit
+  const cleanupLock = () => releaseLock(taskDir);
+  process.on('exit', cleanupLock);
+  process.on('SIGTERM', () => { cleanupLock(); process.exit(1); });
+  process.on('SIGINT', () => { cleanupLock(); process.exit(1); });
 
   emitEvent('start', { type, stepId: stepId || null, outputPath, resume, mode });
 

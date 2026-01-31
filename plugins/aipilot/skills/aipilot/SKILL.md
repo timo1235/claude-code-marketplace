@@ -64,8 +64,12 @@ If the user did not provide a task description, use `AskUserQuestion` AFTER Step
 
 ## Main Loop
 
+**Hard limit: MAX_LOOP_ITERATIONS = 25.** If you reach 25 iterations, STOP immediately, report status to user, and ask how to proceed. This prevents runaway loops from exhausting system resources.
+
 ```
-while pipeline not complete:
+iteration = 0
+while pipeline not complete AND iteration < 25:
+    iteration += 1
     1. TaskList() → find task where blockedBy is empty/resolved AND status is pending
     2. If no such task AND all completed → Completion
     3. If no such task AND some blocked → error, report to user
@@ -73,6 +77,8 @@ while pipeline not complete:
     5. Execute task (see Phase Reference below)
     6. Handle result (may create new tasks)
     7. TaskUpdate(task_id, status: "completed")
+
+If iteration reaches 25 → STOP and report: "Pipeline safety limit reached (25 iterations). Current status: [list remaining tasks]. Please review and decide how to proceed."
 ```
 
 `blockedBy` is data, not an instruction. Only claim tasks where blockedBy is empty or resolved.
@@ -198,5 +204,6 @@ All tasks done → summarize to user.
 - ALWAYS use `TaskCreate` to create tasks and use the returned IDs
 - ALWAYS wrap agent input in XML tags
 - Max 3 review iterations, max 2 UI fix iterations
+- ALWAYS track loop iteration count — STOP at 25 iterations and report to user
 
 </rules>

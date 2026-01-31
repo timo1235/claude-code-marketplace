@@ -247,6 +247,12 @@ function main() {
     return;
   }
 
+  // No pipeline-tasks.json → pipeline not fully initialized → skip validation
+  if (!fileExists(path.join(taskDir, 'pipeline-tasks.json'))) {
+    process.exit(0);
+    return;
+  }
+
   // Check which artifacts were recently modified (within last 30 seconds)
   const now = Date.now();
   const recentThreshold = 30000;

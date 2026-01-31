@@ -152,25 +152,17 @@ function computeGuidance() {
   const projectDir = getProjectDir();
   const taskDir = path.join(projectDir, '.task');
 
-  // Provide initialization guidance when .task/ is missing
+  // No .task/ directory → no pipeline active → silent exit (no output)
   if (!fileExists(taskDir)) {
-    return [
-      '[PIPELINE] Not initialized.',
-      '[PIPELINE] Step 1: Bash("${CLAUDE_PLUGIN_ROOT}/scripts/orchestrator.sh" init --project-dir "${CLAUDE_PROJECT_DIR}")',
-      '[PIPELINE] Step 2: Create 4 tasks with TaskCreate + blockedBy, then Write pipeline-tasks.json with task IDs.',
-      '[PIPELINE] Do NOT call Task() until pipeline-tasks.json exists.'
-    ].join('\n');
+    return null;
   }
 
-  // Check for pipeline-tasks.json gating artifact
+  // No pipeline-tasks.json → initialization incomplete → silent exit
+  // The SKILL.md instructions handle initialization; injecting guidance on every
+  // non-pipeline prompt wastes context and spawns unnecessary Node processes.
   const pipelineTasks = readJsonSafe(path.join(taskDir, 'pipeline-tasks.json'));
   if (!pipelineTasks) {
-    return [
-      '[PIPELINE] .task/ exists but pipeline-tasks.json missing — initialization incomplete.',
-      '[PIPELINE] Use TaskCreate to create 4 phase tasks with blockedBy dependencies.',
-      '[PIPELINE] Then Write pipeline-tasks.json with the task IDs.',
-      '[PIPELINE] Do NOT call Task() until pipeline-tasks.json exists.'
-    ].join('\n');
+    return null;
   }
 
   // Read pipeline mode
