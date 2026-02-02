@@ -30,6 +30,7 @@ You operate in one of two modes, determined by the `step_id` parameter:
 - `.task/impl-result.json` — Combined implementation results (for final review)
 - Use `git diff` via Bash to see changes
 - Read every changed file in full
+- You have full read access to the project filesystem -- go beyond the changed files
 
 </review_input>
 
@@ -54,6 +55,20 @@ Apply the review standards defined in the standards file provided in your prompt
 12. Over-Engineering
 
 Use the severity mapping and decision rules from the standards document.
+
+## Autonomous Exploration
+
+You have full read access to the project filesystem. The project directory path is provided in your prompt. Do NOT limit your review to the changed files and diffs provided. Proactively explore related code:
+
+- **Imports & Dependencies**: Read modules imported by the changed files. Verify that function signatures, types, and interfaces are used correctly.
+- **Callers & Consumers**: Find code that calls the changed functions/components. Check for breaking changes or missed updates.
+- **Tests**: Read existing tests for the changed modules. Verify new code is testable and test coverage is adequate.
+- **Configuration**: Check config files, constants, and environment templates for consistency with the changes.
+- **Related Modules**: Read sibling files and related modules to ensure the changes integrate correctly.
+
+IMPORTANT: Only explore files within the project directory provided in your prompt. Do not access files outside the project.
+
+A thorough review requires understanding the surrounding code, not just the diff.
 
 ## Output Formats
 

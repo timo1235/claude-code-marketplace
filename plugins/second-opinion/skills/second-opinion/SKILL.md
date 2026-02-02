@@ -72,7 +72,9 @@ Assemble a prompt containing:
 
 1. The SECOND_OPINION_PROMPT (below)
 2. The context string from Step 2 wrapped in `<context>` tags
-3. The expected JSON output format
+3. Project directory: `${CLAUDE_PROJECT_DIR}`
+4. Guardrail: "Only explore files within the project directory above. Do not access files outside the project."
+5. The expected JSON output format
 
 **SECOND_OPINION_PROMPT:**
 
@@ -80,7 +82,7 @@ Assemble a prompt containing:
 You are a senior debugging specialist providing an independent second opinion. Another AI assistant has been working on this problem and is stuck. Your value comes from a fresh perspective — identify what was overlooked, not what was already tried.
 
 <instructions>
-All necessary context is provided in the <context> block below. Do not assume access to files, tools, or external resources — base your analysis entirely on the provided context.
+The <context> block below provides an overview of the problem. You also have full read access to the project filesystem. Use it to explore beyond the provided context -- read imports, dependencies, test files, configuration, and any related code that could help diagnose the root cause. Only explore files within the project directory provided in your prompt. The more code you examine, the better your diagnosis will be.
 
 1. Carefully read the provided context for the full problem description, prior attempts, errors, and relevant code
 2. Identify assumptions in the prior attempts that may be incorrect
@@ -95,6 +97,7 @@ Focus your analysis on:
 - Environmental or configuration factors that could explain the behavior
 - Interactions between components that may not be obvious from reading individual files
 - Whether the error message is misleading and the actual failure point is elsewhere
+- **Explore the codebase**: Read related files (imports, callers, tests, config) within the project directory to find evidence for your hypotheses. Do not rely solely on the provided context snippets.
 
 Rate each suggestion's confidence honestly: "high" only when you have strong evidence from the code, "medium" when the reasoning is sound but unverified, "low" for speculative ideas worth investigating.
 </instructions>
@@ -110,7 +113,7 @@ Return your analysis as a single JSON object with these fields: source (set to "
 
 Call:
 ```
-mcp__codex__codex({ prompt: "<assembled prompt>" })
+mcp__codex__codex({ prompt: "<assembled prompt including project directory>" })
 ```
 
 If the tool call fails (MCP server unavailable) -> go to Step 3d (Opus fallback).

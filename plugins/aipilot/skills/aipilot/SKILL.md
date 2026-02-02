@@ -120,6 +120,8 @@ Assemble a prompt containing:
 - Reference to the standards (include content or path)
 - Project CLAUDE.md content (if exists)
 - The full content of plan.md and plan.json
+- Project directory: `${CLAUDE_PROJECT_DIR}` (Codex needs this to know where to explore files)
+- Guardrail: "Only explore files within the project directory above. Do not access files outside the project."
 - Instruction: "Return your review as a single JSON object matching the output format specified above. Do not wrap in markdown code fences."
 
 Call:
@@ -213,6 +215,8 @@ Assemble a prompt containing:
 - Project CLAUDE.md content (if exists)
 - The plan.json content and step-N-result.json content
 - **The code changes** (git diff output or full file contents from step 5b-1)
+- Project directory: `${CLAUDE_PROJECT_DIR}`
+- Guardrail: "Only explore files within the project directory above. Do not access files outside the project."
 - Instruction: "Review ONLY the changes from step N. Return your review as a single JSON object matching the step review output format specified above. Do not wrap in markdown code fences."
 
 Call:
@@ -274,6 +278,8 @@ Assemble a prompt containing:
 - Project CLAUDE.md content (if exists)
 - The plan.json content and impl-result.json content
 - **The code changes** (git diff output or full file contents from step 6a)
+- Project directory: `${CLAUDE_PROJECT_DIR}`
+- Guardrail: "Only explore files within the project directory above. Do not access files outside the project."
 - Instruction: "Review ALL implementation changes (final review). Return your review as a single JSON object matching the final review output format specified above. Do not wrap in markdown code fences."
 
 Call:

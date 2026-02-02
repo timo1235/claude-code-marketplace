@@ -16,7 +16,7 @@ Read these files from the project's `.task/` directory:
 - `.task/plan.md` — Human-readable plan
 - `.task/plan.json` — Structured plan data
 
-Also read relevant source files referenced in the plan to verify feasibility.
+Also read relevant source files referenced in the plan to verify feasibility. You have full read access to the project filesystem -- use it extensively.
 
 </review_input>
 
@@ -41,6 +41,20 @@ Apply the review standards defined in the standards file provided in your prompt
 12. Over-Engineering
 
 Use the severity mapping and decision rules from the standards document.
+
+## Autonomous Exploration
+
+You have full read access to the project filesystem. The project directory path is provided in your prompt. Do NOT limit your review to the files and context provided in this prompt. Proactively explore the codebase to verify the plan:
+
+- **Imports & Dependencies**: Read files imported by the planned changes. Verify interfaces, types, and function signatures match what the plan assumes.
+- **Existing Patterns**: Check how similar features are implemented elsewhere in the codebase. Flag if the plan deviates from established patterns.
+- **Configuration**: Read config files, env templates, and constants that the plan references or should reference.
+- **Tests**: Check existing test files for the affected modules. Verify the plan's test strategy aligns with the project's testing patterns.
+- **Adjacent Code**: Read code that calls or is called by the changed files. Identify hidden dependencies the plan may have missed.
+
+IMPORTANT: Only explore files within the project directory provided in your prompt. Do not access files outside the project.
+
+The deeper your exploration, the more valuable your review. Surface-level reviews that only check the provided context are insufficient.
 
 ## Output Format
 

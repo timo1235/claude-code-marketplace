@@ -1,6 +1,6 @@
 {
   "name": "second-opinion",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Get a second opinion from an alternative AI model (Codex via MCP or Opus fallback) when stuck on a problem",
   "author": {
     "name": "Timo",

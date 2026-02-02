@@ -256,6 +256,11 @@ cmd_dry_run() {
   echo "--- MCP Configuration ---"
   if [ -f "$PLUGIN_ROOT/.mcp.json" ]; then
     echo "  OK  .mcp.json"
+    if grep -q 'disk-full-read-access' "$PLUGIN_ROOT/.mcp.json"; then
+      echo "  OK  sandbox_permissions includes disk-full-read-access"
+    else
+      echo "  WARN  .mcp.json missing disk-full-read-access sandbox permission (Codex cannot read files)"
+    fi
   else
     echo "  FAIL  .mcp.json (not found -- Codex MCP server not configured)"
     errors=$((errors + 1))
@@ -316,6 +321,11 @@ cmd_init() {
   # Check Codex MCP configuration
   if [ -f "$PLUGIN_ROOT/.mcp.json" ]; then
     echo "  OK  .mcp.json found (Codex MCP server configured)"
+    if grep -q 'disk-full-read-access' "$PLUGIN_ROOT/.mcp.json"; then
+      echo "  OK  sandbox_permissions includes disk-full-read-access"
+    else
+      echo "  WARN  .mcp.json missing disk-full-read-access sandbox permission (Codex cannot read files)"
+    fi
   else
     echo "  WARN  .mcp.json not found (Codex reviews will not work)"
   fi
