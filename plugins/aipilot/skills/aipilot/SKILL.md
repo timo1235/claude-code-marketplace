@@ -310,9 +310,15 @@ Read `${TASK_DIR}/code-review.json` and handle status:
 
 ### Phase 7: UI Verification (only if `has_ui_changes: true`)
 
+Build the verification scope from `${TASK_DIR}/impl-result.json` and `${TASK_DIR}/plan.json`: list every user-facing feature that was implemented, what it should do, and how to test it. Be specific — include URLs, expected behaviors, and test scenarios.
+
 ```
-Task({ subagent_type: "aipilot:ui-verifier", model: "opus", prompt: "<verification_scope>\n{SCOPE}\n</verification_scope>\n\nProject: ${CLAUDE_PROJECT_DIR}\n\nSession: TASK_DIR=${TASK_DIR}", description: "Verify UI" })
+Task({ subagent_type: "aipilot:ui-verifier", model: "opus", prompt: "<verification_scope>\n{DETAILED_SCOPE}\n</verification_scope>\n\nProject: ${CLAUDE_PROJECT_DIR}\n\nSession: TASK_DIR=${TASK_DIR}", description: "Verify UI" })
 ```
+
+Read `${TASK_DIR}/ui-review.json` and handle:
+- `approved` (zero console errors, zero network failures, all features pass) → continue to Completion
+- `needs_changes` → fix issues + re-verify (max 2 iterations). On each fix iteration, pass the failing features and their issues to the implementer agent.
 
 ### Completion
 
