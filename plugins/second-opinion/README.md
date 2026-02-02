@@ -4,11 +4,11 @@ Get an independent second opinion from an alternative AI model when you're stuck
 
 ## Features
 
-- **Manual trigger**: `/second-opinion` collects context, invokes Codex CLI or Opus, presents analysis
+- **Manual trigger**: `/second-opinion` collects context, invokes Codex via MCP or Opus, presents analysis
 - **Automatic detection**: Hook detects repeated errors and suggests getting a second opinion
-- **Codex + Opus**: Prefers Codex CLI for independence, falls back to Opus subagent
+- **Codex + Opus**: Prefers Codex via MCP for independence, falls back to Opus subagent
 - **Non-invasive**: Only presents suggestions, never automatically implements changes
-- **No project clutter**: All temp files go to system temp directory and are cleaned up automatically
+- **No project clutter**: No files written to project directory, all data flows via MCP and stdin/stdout
 
 ## Installation
 
@@ -26,7 +26,7 @@ When stuck on a problem, type:
 
 The plugin will:
 1. Gather context about your current problem
-2. Pipe it to Codex CLI (or Opus) for independent analysis
+2. Call Codex via MCP (or Opus) for independent analysis
 3. Present the results directly — no files left behind
 
 ### Automatic Suggestions
@@ -40,7 +40,7 @@ The plugin automatically monitors for repeated errors. When the same error appea
 ## Requirements
 
 - Claude Code CLI
-- Codex CLI (optional, recommended — falls back to Opus if unavailable)
+- Codex MCP server (optional, configured via .mcp.json — falls back to Opus if unavailable)
 
 ## How It Works
 
@@ -48,16 +48,16 @@ The plugin automatically monitors for repeated errors. When the same error appea
 
 ```
 /second-opinion (Skill)
-  → gathers context from conversation + codebase
-  → pipes context via stdin to get-opinion.js
-    → Codex available? → codex exec (temp files in /tmp, cleaned up) → JSON on stdout
-    → No Codex? → exit 10 → Opus subagent with context in prompt → JSON in response
-  → presents formatted results
+  -> gathers context from conversation + codebase
+  -> calls mcp__codex__codex with assembled prompt
+    -> MCP available + valid JSON? -> validate via stdin pipe to validate-opinion.js -> present
+    -> MCP fails / non-JSON / invalid? -> Opus subagent with context in prompt -> JSON in response
+  -> presents formatted results
 
 PostToolUse Hook (stuck-detector.js)
-  → extracts error signatures from tool results
-  → tracks state in /tmp (no project files)
-  → same error 2x + cooldown passed → advisory suggestion
+  -> extracts error signatures from tool results
+  -> tracks state in /tmp (no project files)
+  -> same error 2x + cooldown passed -> advisory suggestion
 ```
 
 ### Loop Prevention
@@ -67,7 +67,6 @@ PostToolUse Hook (stuck-detector.js)
 | Advisory hook (exit 0) | Claude decides, not forced |
 | 3-minute cooldown | No spam between suggestions |
 | Max 3 suggestions/30min | Auto-resetting limit on suggestions |
-| Atomic lock file | Prevents concurrent Codex processes |
 | Read-only agent | Opinion agent can't create new errors |
 
 ## License
