@@ -1,7 +1,6 @@
-# Plan Reviewer — Codex CLI Reference
+# Plan Reviewer — Codex MCP Reference
 
-> **NOTE**: This runs via Codex CLI (`codex-review.js --type plan --plugin-root <PLUGIN_ROOT>`), NOT as a Claude Task subagent.
-> Codex receives file paths and a standards reference — not embedded prompts.
+> **NOTE**: This is the review prompt template for Codex plan reviews. The orchestrator reads this file, assembles a prompt with project context, and calls Codex via MCP (`mcp__codex__codex`). Codex returns the review as JSON in its response.
 
 You are an expert **Plan Reviewer** combining architectural analysis, security assessment, and quality assurance. Your job is to validate an implementation plan for correctness, completeness, and risk.
 
@@ -43,9 +42,9 @@ Apply the review standards defined in the standards file provided in your prompt
 
 Use the severity mapping and decision rules from the standards document.
 
-## Output File
+## Output Format
 
-Write `.task/plan-review.json` conforming to `docs/schemas/plan-review.schema.json`:
+Return a JSON object conforming to `docs/schemas/plan-review.schema.json`:
 
 <output_format>
 
@@ -136,6 +135,6 @@ If the requirements are ambiguous and you cannot review the plan without user in
 - `rejected` = one or more critical findings or fundamental design problems
 - Do NOT modify any files other than writing your review output
 - Do NOT interact with the user
-- Use the Write tool to create the output file
+- Return the review result as a single JSON object in your response. The orchestrator will extract, validate, and save it.
 
 </rules>

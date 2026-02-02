@@ -135,17 +135,6 @@ cmd_status() {
     fi
   done
 
-  # Session markers
-  local sessions=0
-  for f in "$TASK_DIR"/.codex-session-*; do
-    if [ -f "$f" ]; then
-      sessions=$((sessions + 1))
-    fi
-  done
-  if [ "$sessions" -gt 0 ]; then
-    echo ""
-    echo "Active Codex sessions: $sessions"
-  fi
 }
 
 # --- Dry Run ---
@@ -160,7 +149,7 @@ cmd_dry_run() {
 
   # Check scripts
   echo "--- Scripts ---"
-  for script in codex-review.js; do
+  for script in validate-review.js; do
     local spath="$PLUGIN_ROOT/scripts/$script"
     if [ -f "$spath" ]; then
       echo "  OK  $script"
@@ -226,7 +215,7 @@ cmd_dry_run() {
       echo "  OK  $tool ($version)"
     else
       if [ "$tool" = "codex" ]; then
-        echo "  WARN  $tool (optional - needed for Codex-powered reviews)"
+        echo "  WARN  $tool (needed for MCP server)"
         # Codex is optional; don't increment errors
       else
         echo "  FAIL  $tool (required)"
@@ -262,19 +251,14 @@ cmd_dry_run() {
     echo "  WARN  standards.md (not found)"
   fi
 
-  # Preflight check
+  # MCP Configuration check
   echo ""
-  echo "--- Codex Preflight ---"
-  if command -v codex >/dev/null 2>&1; then
-    if node "$PLUGIN_ROOT/scripts/codex-review.js" --type preflight 2>/dev/null; then
-      echo "  OK  Codex preflight passed"
-    else
-      echo "  FAIL  Codex preflight failed"
-      errors=$((errors + 1))
-    fi
+  echo "--- MCP Configuration ---"
+  if [ -f "$PLUGIN_ROOT/.mcp.json" ]; then
+    echo "  OK  .mcp.json"
   else
-    echo "  SKIP  Codex not installed (reviews will use fallback or manual mode)"
-    # Codex is optional; don't increment errors
+    echo "  FAIL  .mcp.json (not found -- Codex MCP server not configured)"
+    errors=$((errors + 1))
   fi
 
   echo ""
@@ -329,15 +313,16 @@ cmd_init() {
   fi
   echo "  OK  node ($(node --version 2>/dev/null))"
 
-  if command -v codex >/dev/null 2>&1; then
-    if node "$PLUGIN_ROOT/scripts/codex-review.js" --type preflight 2>/dev/null; then
-      echo "  OK  Codex preflight passed"
-    else
-      echo "  FAIL  Codex preflight failed"
-      exit 1
-    fi
+  # Check Codex MCP configuration
+  if [ -f "$PLUGIN_ROOT/.mcp.json" ]; then
+    echo "  OK  .mcp.json found (Codex MCP server configured)"
   else
-    echo "  WARN  Codex not installed (reviews will fail)"
+    echo "  WARN  .mcp.json not found (Codex reviews will not work)"
+  fi
+  if command -v codex >/dev/null 2>&1; then
+    echo "  OK  codex CLI on PATH ($(codex --version 2>/dev/null | head -1))"
+  else
+    echo "  WARN  codex CLI not found (MCP server needs codex installed)"
   fi
 
   echo ""

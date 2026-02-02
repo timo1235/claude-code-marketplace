@@ -46,7 +46,7 @@ See `AGENTS.md` for detailed agent specifications.
 - **1-5 step plans**: Complexity-based step count keeps plans focused and reviewable
 - **Per-step implementation + review**: Each step is implemented and reviewed individually before moving on
 - **Final review**: After all steps, a comprehensive review verifies overall completeness
-- **Codex CLI via Bash**: All reviews run via `codex-review.js` → Codex CLI (not as Claude subagents). Verify via `.task/codex_stderr.log`
+- **Codex via MCP**: All reviews use `mcp__codex__codex` tool calls. The orchestrator builds prompts, calls Codex via MCP, parses the JSON response, writes review artifacts, and validates with `validate-review.js`
 - **Playwright for UI**: Visual verification catches issues automated tests miss
 - **User plan verification**: User can request plan changes, triggering Opus revision + Codex re-review before approval
 - **Iteration limits**: Max 3 review loops per gate before escalating to user

@@ -17,7 +17,7 @@
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  Phase 2: PLAN REVIEW                                            │
-│  Codex CLI via Bash: codex-review.js --type plan                 │
+│  Codex via MCP: mcp__codex__codex                                │
 │  Output: .task/plan-review.json                                  │
 │                                                                  │
 │  ┌─────────────┐  ┌──────────────┐  ┌──────────┐               │
@@ -61,7 +61,7 @@
 │  │                     │                                  │       │
 │  │                     ▼                                  │       │
 │  │  5b: Review Step N                                     │       │
-│  │  Codex CLI via Bash: --type step-review --step-id N    │       │
+│  │  Codex via MCP: mcp__codex__codex (step review)        │       │
 │  │  Output: .task/step-N-review.json                      │       │
 │  │                     │                                  │       │
 │  │       ┌─────────────┼──────────────┐                   │       │
@@ -83,7 +83,7 @@
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  Phase 6: FINAL CODE REVIEW                                      │
-│  Codex CLI via Bash: codex-review.js --type final-review         │
+│  Codex via MCP: mcp__codex__codex (final review)                 │
 │  Reviews ALL changes, verifies overall plan completeness         │
 │  Output: .task/code-review.json                                  │
 │                                                                  │
@@ -131,12 +131,11 @@ All stored in `.task/` directory:
 | `pipeline-tasks.json` | Orchestrator | Init |
 | `plan.md` | Analyzer | 1, 3 |
 | `plan.json` | Analyzer | 1, 3 |
-| `plan-review.json` | Codex | 2 |
+| `plan-review.json` | Orchestrator (via Codex MCP) | 2 |
 | `user-plan-feedback.json` | Orchestrator | 4 |
 | `step-N-result.json` | Implementer | 5a (per step) |
-| `step-N-review.json` | Codex | 5b (per step) |
+| `step-N-review.json` | Orchestrator (via Codex MCP) | 5b (per step) |
 | `impl-result.json` | Orchestrator | 5 (summary) |
-| `code-review.json` | Codex | 6 |
+| `code-review.json` | Orchestrator (via Codex MCP) | 6 |
 | `ui-review.json` | UI Verifier | 7 |
 | `screenshots/*.png` | UI Verifier | 7 |
-| `codex_stderr.log` | Codex wrapper | 2, 5b, 6 |

@@ -32,11 +32,11 @@ Oder einfach sagen: "start pipeline", "plan and implement", etc.
 | Phase | Agent | Beschreibung | Artefakte |
 |-------|-------|-------------|-----------|
 | 1. Analyse & Planung | Opus (Analyzer) | Analysiert die Codebase, erstellt Implementierungsplan | `.task/plan.md`, `.task/plan.json` |
-| 2. Plan Review | Codex (via CLI) | Prueft Plan auf Korrektheit, Vollstaendigkeit, Sicherheit | `.task/plan-review.json` |
+| 2. Plan Review | Codex (via MCP) | Prueft Plan auf Korrektheit, Vollstaendigkeit, Sicherheit | `.task/plan-review.json` |
 | 3. Plan Revision | Opus (Analyzer) | Ueberarbeitet Plan basierend auf Review-Ergebnissen (optional) | Aktualisierte Plan-Dateien |
 | 4. User Review | Manuell | Benutzer prueft/editiert den Plan und gibt Freigabe | - |
-| 5. Schrittweise Implementierung | Opus (Implementer) + Codex | Pro Step: Opus implementiert, Codex reviewt (Fix-Loop bei Bedarf) | `.task/step-N-result.json`, `.task/step-N-review.json` |
-| 6. Final Code Review | Codex (via CLI) | Prueft alle Aenderungen insgesamt auf Vollstaendigkeit | `.task/code-review.json` |
+| 5. Schrittweise Implementierung | Opus (Implementer) + Codex (via MCP) | Pro Step: Opus implementiert, Codex reviewt (Fix-Loop bei Bedarf) | `.task/step-N-result.json`, `.task/step-N-review.json` |
+| 6. Final Code Review | Codex (via MCP) | Prueft alle Aenderungen insgesamt auf Vollstaendigkeit | `.task/code-review.json` |
 | 7. UI Verifikation | Opus + Playwright | Visuelle Pruefung der UI-Aenderungen (optional) | `.task/ui-review.json`, Screenshots |
 
 ## Agenten
@@ -44,9 +44,9 @@ Oder einfach sagen: "start pipeline", "plan and implement", etc.
 | Agent | Modell | Aufgabe |
 |-------|--------|---------|
 | **analyzer** | Opus (Task Agent) | Codebase-Analyse und Planerstellung (1-5 Steps) |
-| **plan-reviewer** | Codex CLI (Bash) | Plan-Validierung und Risikobewertung |
+| **plan-reviewer** | Codex MCP | Plan-Validierung und Risikobewertung |
 | **implementer** | Opus (Task Agent) | Einzelschritt-Implementierung (ein Step pro Aufruf) |
-| **code-reviewer** | Codex CLI (Bash) | Step-Review oder Final-Review (zwei Modi) |
+| **code-reviewer** | Codex MCP | Step-Review oder Final-Review (zwei Modi) |
 | **ui-verifier** | Opus (Task Agent) + Playwright | Visuelle UI-Verifikation mit Screenshots |
 
 ## Hooks
@@ -70,7 +70,7 @@ Das Plugin nutzt drei Hook-Typen:
 ## Voraussetzungen
 
 - Claude Code CLI
-- Codex CLI (optional, aber empfohlen fuer Reviews)
+- Codex CLI (erforderlich fuer MCP Server und Reviews)
 - Playwright MCP Plugin (fuer UI-Verifikation)
 - Git Repository (fuer Diff-Tracking)
 
@@ -79,6 +79,7 @@ Das Plugin nutzt drei Hook-Typen:
 ```
 .claude-plugin/
   plugin.json              # Plugin-Metadaten und Konfiguration
+.mcp.json                  # MCP Server Konfiguration (Codex)
 .task.template/
   state.json               # Template fuer Pipeline-State-Tracking
 agents/
@@ -96,7 +97,7 @@ hooks/
   scripts/
     enforce-opus-agents.sh # PreToolUse Hook
 scripts/
-  codex-review.js          # Codex CLI Wrapper fuer Reviews
+  validate-review.js       # Review JSON Validation und Aggregation
 skills/
   pipeline/
     SKILL.md               # Pipeline-Orchestrator-Skill

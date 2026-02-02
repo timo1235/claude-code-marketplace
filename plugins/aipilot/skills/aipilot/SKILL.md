@@ -2,7 +2,7 @@
 name: aipilot
 description: Start the multi-AI pipeline. Opus plans, Codex reviews, User approves, Opus implements, Codex gates. Use when the user says "aipilot", "start aipilot", "pipeline", "start pipeline", or "plan and implement".
 plugin-scoped: true
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, AskUserQuestion, TaskCreate, TaskUpdate, TaskList, TaskGet
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, AskUserQuestion, TaskCreate, TaskUpdate, TaskList, TaskGet, mcp__codex__codex
 ---
 
 # Pipeline Orchestrator
@@ -101,15 +101,47 @@ Do NOT summarize output. Main Loop picks up Phase 2.
 
 ### Phase 2: Codex Plan Review
 
-Read `.task/pipeline-config.json` to get the current mode. Then:
+Read `.task/pipeline-config.json` to get the current mode.
+
+**Step 2a: Read prompt context**
+
+Read these files:
+- `${CLAUDE_PLUGIN_ROOT}/docs/codex-prompts/plan-reviewer.md` (review instructions)
+- `${CLAUDE_PLUGIN_ROOT}/docs/standards-prototype.md` (if mode=prototype) or `standards.md` (if mode=production)
+- `${CLAUDE_PROJECT_DIR}/CLAUDE.md` (if exists -- project rules take precedence)
+- `${CLAUDE_PROJECT_DIR}/.task/plan.md`
+- `${CLAUDE_PROJECT_DIR}/.task/plan.json`
+
+**Step 2b: Call Codex via MCP**
+
+Assemble a prompt containing:
+- Pipeline mode
+- The content of plan-reviewer.md (review criteria and output format)
+- Reference to the standards (include content or path)
+- Project CLAUDE.md content (if exists)
+- The full content of plan.md and plan.json
+- Instruction: "Return your review as a single JSON object matching the output format specified above. Do not wrap in markdown code fences."
+
+Call:
+```
+mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "gpt-5" })
+```
+
+If the tool call fails (MCP server unavailable), report to user: "Codex MCP server not available. Run /pipeline-check for diagnostics."
+
+**Step 2c: Write review JSON**
+
+Extract the JSON object from Codex's response (find the outermost `{...}` structure). Parse it. Write to `.task/plan-review.json` using the Write tool.
+
+**Step 2d: Validate**
 
 ```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type plan --plugin-root ${CLAUDE_PLUGIN_ROOT} --project-dir ${CLAUDE_PROJECT_DIR} --mode {MODE}")
+Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type plan --project-dir ${CLAUDE_PROJECT_DIR}")
 ```
 
-Replace `{MODE}` with the value from `pipeline-config.json`.
+If validation fails (exit code 1), read the validation errors from stdout, fix the JSON accordingly, re-write `.task/plan-review.json`, and re-validate. Max 2 attempts.
 
-Read `.task/plan-review.json`:
+Read `.task/plan-review.json` and handle status:
 
 | Status | Action |
 |--------|--------|
@@ -157,36 +189,114 @@ Task({ subagent_type: "aipilot:implementer", model: "opus", prompt: "<step_id>\n
 
 ### Phase 5b: Review Step N
 
-Read `.task/pipeline-config.json` to get the current mode. Then:
+Read `.task/pipeline-config.json` to get the current mode.
+
+**Step 5b-1: Read prompt context and gather code changes**
+
+Read these files:
+- `${CLAUDE_PLUGIN_ROOT}/docs/codex-prompts/code-reviewer.md` (review instructions)
+- `${CLAUDE_PLUGIN_ROOT}/docs/standards-prototype.md` (if mode=prototype) or `standards.md` (if mode=production)
+- `${CLAUDE_PROJECT_DIR}/CLAUDE.md` (if exists -- project rules take precedence)
+- `${CLAUDE_PROJECT_DIR}/.task/plan.json`
+- `${CLAUDE_PROJECT_DIR}/.task/step-N-result.json`
+
+Then gather the actual code changes for review:
+- Run `Bash("git diff HEAD~1 -- <files>")` where `<files>` are the `files_changed` from `step-N-result.json`
+- If git diff is empty or unavailable, read the full content of each changed file instead
+
+**Step 5b-2: Call Codex via MCP**
+
+Assemble a prompt containing:
+- Pipeline mode
+- The content of code-reviewer.md (review criteria and output format)
+- Reference to the standards (include content or path)
+- Project CLAUDE.md content (if exists)
+- The plan.json content and step-N-result.json content
+- **The code changes** (git diff output or full file contents from step 5b-1)
+- Instruction: "Review ONLY the changes from step N. Return your review as a single JSON object matching the step review output format specified above. Do not wrap in markdown code fences."
+
+Call:
+```
+mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "gpt-5" })
+```
+
+If the tool call fails (MCP server unavailable), report to user: "Codex MCP server not available. Run /pipeline-check for diagnostics."
+
+**Step 5b-3: Write review JSON**
+
+Extract the JSON object from Codex's response (find the outermost `{...}` structure). Parse it. Write to `.task/step-N-review.json` using the Write tool.
+
+**Step 5b-4: Validate**
 
 ```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type step-review --step-id N --plugin-root ${CLAUDE_PLUGIN_ROOT} --project-dir ${CLAUDE_PROJECT_DIR} --mode {MODE}")
+Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type step-review --step-id N --project-dir ${CLAUDE_PROJECT_DIR}")
 ```
 
+If validation fails (exit code 1), read the validation errors from stdout, fix the JSON accordingly, re-write `.task/step-N-review.json`, and re-validate. Max 2 attempts.
+
+Read `.task/step-N-review.json` and handle status:
 `approved` → continue. `needs_changes` → fix + re-review (max 3). `rejected` → escalate.
 
 ### Phase 5c: Aggregate Implementation Results
 
-After ALL step implementations and reviews are complete, aggregate the results. The `codex-review.js` script does this automatically if `impl-result.json` is missing, but you can also create it explicitly by reading all `step-N-result.json` files and writing `.task/impl-result.json`:
+After ALL step implementations and reviews are complete, aggregate the results:
 
-```json
-{
-  "status": "complete|partial|failed",
-  "has_ui_changes": true|false,
-  "steps_completed": [1, 2, 3],
-  "files_changed": ["path/to/file.ts"],
-  "tests_written": ["path/to/test.ts"],
-  "notes": null
-}
 ```
+Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type aggregate --project-dir ${CLAUDE_PROJECT_DIR}")
+```
+
+This reads all `step-N-result.json` files and writes `.task/impl-result.json` with the combined status, files, and tests.
 
 ### Phase 6: Final Review
 
-Read `.task/pipeline-config.json` to get the current mode. Then:
+Read `.task/pipeline-config.json` to get the current mode.
+
+**Step 6a: Read prompt context and gather code changes**
+
+Read these files:
+- `${CLAUDE_PLUGIN_ROOT}/docs/codex-prompts/code-reviewer.md` (review instructions)
+- `${CLAUDE_PLUGIN_ROOT}/docs/standards-prototype.md` (if mode=prototype) or `standards.md` (if mode=production)
+- `${CLAUDE_PROJECT_DIR}/CLAUDE.md` (if exists -- project rules take precedence)
+- `${CLAUDE_PROJECT_DIR}/.task/plan.json`
+- `${CLAUDE_PROJECT_DIR}/.task/impl-result.json`
+
+Then gather all code changes for the final review:
+- Read `impl-result.json` to get the full `files_changed` list
+- Run `Bash("git diff HEAD~N -- <files>")` where N = number of implementation commits and `<files>` are all files from `impl-result.json`
+- If git diff is empty or unavailable, read the full content of each changed file instead
+
+**Step 6b: Call Codex via MCP**
+
+Assemble a prompt containing:
+- Pipeline mode
+- The content of code-reviewer.md (review criteria and output format)
+- Reference to the standards (include content or path)
+- Project CLAUDE.md content (if exists)
+- The plan.json content and impl-result.json content
+- **The code changes** (git diff output or full file contents from step 6a)
+- Instruction: "Review ALL implementation changes (final review). Return your review as a single JSON object matching the final review output format specified above. Do not wrap in markdown code fences."
+
+Call:
+```
+mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "gpt-5" })
+```
+
+If the tool call fails (MCP server unavailable), report to user: "Codex MCP server not available. Run /pipeline-check for diagnostics."
+
+**Step 6c: Write review JSON**
+
+Extract the JSON object from Codex's response (find the outermost `{...}` structure). Parse it. Write to `.task/code-review.json` using the Write tool.
+
+**Step 6d: Validate**
 
 ```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/codex-review.js --type final-review --plugin-root ${CLAUDE_PLUGIN_ROOT} --project-dir ${CLAUDE_PROJECT_DIR} --mode {MODE}")
+Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type final-review --project-dir ${CLAUDE_PROJECT_DIR}")
 ```
+
+If validation fails (exit code 1), read the validation errors from stdout, fix the JSON accordingly, re-write `.task/code-review.json`, and re-validate. Max 2 attempts.
+
+Read `.task/code-review.json` and handle status:
+`approved` → continue. `needs_changes` → fix + re-review (max 3). `rejected` → escalate.
 
 ### Phase 7: UI Verification (only if `has_ui_changes: true`)
 

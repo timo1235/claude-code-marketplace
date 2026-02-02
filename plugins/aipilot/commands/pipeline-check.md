@@ -15,7 +15,8 @@ Parse the output and present results to the user:
 - If the output ends with `Dry run PASSED`, report: **Pipeline ready. All checks passed.**
 - If the output ends with `Dry run FAILED`, list each FAIL and WARN line with remediation advice:
   - FAIL node: "Install Node.js"
-  - WARN codex: "Optional. Install Codex CLI for AI-powered reviews, or skip for manual reviews."
+  - WARN codex: "Install Codex CLI for MCP server. Required for AI-powered reviews."
+  - WARN/FAIL .mcp.json: "MCP configuration missing. The plugin requires .mcp.json for Codex integration."
   - WARN schema: "Schema file missing at <path>. Pipeline may produce unstructured review output."
 
 Format the output as a checklist using checkmark/cross symbols:

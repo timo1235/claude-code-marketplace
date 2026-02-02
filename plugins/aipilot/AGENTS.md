@@ -11,13 +11,14 @@
 | Pipeline Check cmd | Pre-flight verification | commands/pipeline-check.md |
 | Phase Guidance hook | Advisory context injection | hooks/phase-guidance.js |
 | Review Gate hook | Quality enforcement on SubagentStop | hooks/review-gate.js |
-| Codex Review script | Codex CLI wrapper for reviews | scripts/codex-review.js |
+| Validate Review script | Review JSON validation + aggregation | scripts/validate-review.js |
 | Orchestrator script | Init, reset, status, dry-run | scripts/orchestrator.sh |
 
 ## Directory & File Structure
 
 ```
 plugins/aipilot/
+├── .mcp.json
 ├── .claude-plugin/plugin.json
 ├── CLAUDE.md
 ├── AGENTS.md
@@ -44,7 +45,7 @@ plugins/aipilot/
 │   ├── phase-guidance.js
 │   └── review-gate.js
 ├── scripts/
-│   ├── codex-review.js
+│   ├── validate-review.js
 │   └── orchestrator.sh
 └── skills/
     └── aipilot/SKILL.md
@@ -62,11 +63,12 @@ plugins/aipilot/
 | Modify phase detection | hooks/phase-guidance.js | detectPhase() |
 | Change validation rules | hooks/review-gate.js | validate*() functions |
 | Add orchestrator commands | scripts/orchestrator.sh | case statement at bottom |
-| Modify Codex invocation | scripts/codex-review.js | buildPromptFilePaths() / runCodex() |
+| Modify Codex invocation | skills/aipilot/SKILL.md | Phase 2/5b/6 review sections |
+| Validate review output | scripts/validate-review.js | validateOutput() / aggregateStepResults() |
 
 ## Integration Points
 
-- **Codex CLI** (optional): scripts/codex-review.js spawns `codex exec` for reviews
+- **Codex MCP**: `.mcp.json` registers Codex as MCP server. Orchestrator calls `mcp__codex__codex` for reviews
 - **Pipeline modes**: prototype vs production, read from .task/pipeline-config.json
 - **Artifact-based phase detection**: hooks/phase-guidance.js reads .task/*.json files
 - **Hook events**: UserPromptSubmit (advisory), SubagentStop (enforcement)
