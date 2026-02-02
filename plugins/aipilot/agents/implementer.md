@@ -18,10 +18,12 @@ The step number to implement (e.g. 1, 2, 3).
 If this is a fix iteration, the review findings to address will appear here.
 </fix_findings>
 
-Also read from the project's `.task/` directory:
-- `.task/plan.json` — The approved implementation plan (read to understand context and your specific step)
-- `.task/step-{N}-review.json` — (If this is a fix iteration) Review findings for this step
-- `.task/pipeline-config.json` — Pipeline mode configuration
+The orchestrator provides the task directory path in the prompt as `Session: TASK_DIR=...`. Use this path for all artifact reads and writes.
+
+Also read from the project's task directory:
+- `{TASK_DIR}/plan.json` — The approved implementation plan (read to understand context and your specific step)
+- `{TASK_DIR}/step-{N}-review.json` — (If this is a fix iteration) Review findings for this step
+- `{TASK_DIR}/pipeline-config.json` — Pipeline mode configuration
 
 ## Pipeline Mode
 
@@ -31,7 +33,7 @@ The orchestrator provides the pipeline mode:
 prototype or production
 </pipeline_mode>
 
-Also readable from `.task/pipeline-config.json` (`{ "mode": "prototype" }`).
+Also readable from `{TASK_DIR}/pipeline-config.json` (`{ "mode": "prototype" }`).
 
 ### Prototype Mode
 - **Testing**: Write unit tests for core business logic. Integration/E2E tests are not required. Edge-case tests are nice-to-have, not mandatory.
@@ -47,7 +49,7 @@ Apply the mode when implementing: adjust test coverage and compatibility handlin
 
 ## Output File
 
-Write `.task/step-{N}-result.json` (where N is your `step_id`) when the step is complete:
+Write `{TASK_DIR}/step-{N}-result.json` (where N is your `step_id`) when the step is complete:
 
 <output_format>
 
@@ -78,7 +80,7 @@ Think carefully before writing any code. For each file you modify, first read it
    - `changes` array — per-file change descriptions with implementation details
    - `data_flow` — how data moves through this step
    - `details` fields — pseudocode, function signatures, component structure
-2. **Read prior step results** — If `step_id > 1`, read `.task/step-{1..N-1}-result.json` to understand what was already done
+2. **Read prior step results** — If `step_id > 1`, read `{TASK_DIR}/step-{1..N-1}-result.json` to understand what was already done
 3. **Plan your changes** — Before editing, verify the plan's details against the actual code. The plan provides the architecture; adapt to the real codebase if needed. If the plan is missing `changes` or `data_flow` for your step, set status to `blocked` with reason "Plan missing implementation details for step N" — do NOT guess the architecture.
 4. **Implement the step:**
    - Read the existing code that will be modified
@@ -109,10 +111,10 @@ Think carefully before writing any code. For each file you modify, first read it
 - Follow the project's existing logging conventions. Do not use print statements for logging.
 
 ### Fix Iterations
-- If `.task/step-{N}-review.json` exists with `needs_changes`, read it first.
+- If `{TASK_DIR}/step-{N}-review.json` exists with `needs_changes`, read it first.
 - Address ALL findings from the step review.
 - Do not re-implement things that already work — only fix what was flagged.
-- After fixing, overwrite `.task/step-{N}-result.json` with updated results.
+- After fixing, overwrite `{TASK_DIR}/step-{N}-result.json` with updated results.
 
 ### Communication
 - Do NOT interact with the user directly.

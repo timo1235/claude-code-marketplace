@@ -4,8 +4,8 @@
  * Review JSON validation and step-result aggregation.
  *
  * Usage:
- *   node validate-review.js --type plan|step-review|final-review --project-dir /path [--step-id N]
- *   node validate-review.js --type aggregate --project-dir /path
+ *   node validate-review.js --type plan|step-review|final-review --project-dir /path [--step-id N] [--task-dir /path]
+ *   node validate-review.js --type aggregate --project-dir /path [--task-dir /path]
  *
  * Exit codes:
  *   0 = valid (or aggregate success)
@@ -31,6 +31,7 @@ function parseArgs() {
     type: null,
     projectDir: null,
     stepId: null,
+    taskDir: null,
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -43,6 +44,9 @@ function parseArgs() {
         break;
       case '--step-id':
         result.stepId = args[++i];
+        break;
+      case '--task-dir':
+        result.taskDir = args[++i];
         break;
     }
   }
@@ -68,6 +72,100 @@ function readJsonSafe(filePath) {
   } catch {
     return null;
   }
+}
+
+// --- Session Discovery ---
+
+/**
+ * Discover the latest session task directory by scanning for .task-* dirs.
+ * Returns absolute path or null.
+ */
+function discoverLatestTaskDir(projectDir) {
+  try {
+    const entries = fs.readdirSync(projectDir);
+    let latestDir = null;
+    let latestTs = 0;
+
+    for (const entry of entries) {
+      if (!/^\.task-[a-f0-9]{6}$/.test(entry)) continue;
+      const fullPath = path.join(projectDir, entry);
+
+      try {
+        const lstat = fs.lstatSync(fullPath);
+        if (!lstat.isDirectory()) continue;
+        if (lstat.isSymbolicLink()) continue;
+      } catch { continue; }
+
+      try {
+        const resolved = fs.realpathSync(fullPath);
+        if (!resolved.startsWith(projectDir + path.sep) && resolved !== projectDir) continue;
+      } catch { continue; }
+
+      let ts = 0;
+      const tsFile = path.join(fullPath, '.session-ts');
+      try {
+        ts = parseInt(fs.readFileSync(tsFile, 'utf8').trim(), 10) || 0;
+      } catch {
+        try { ts = Math.floor(fs.statSync(fullPath).mtimeMs / 1000); } catch { ts = 0; }
+      }
+
+      if (ts > latestTs) {
+        latestTs = ts;
+        latestDir = fullPath;
+      } else if (ts === latestTs && latestDir) {
+        if (fullPath > latestDir) latestDir = fullPath;
+      }
+    }
+
+    return latestDir;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve task directory from args, env var, or filesystem scan.
+ * Returns absolute path or null.
+ */
+function validateDirSafe(dir, projectDir) {
+  try {
+    const lstat = fs.lstatSync(dir);
+    if (!lstat.isDirectory() || lstat.isSymbolicLink()) return false;
+    const resolved = fs.realpathSync(dir);
+    if (!resolved.startsWith(projectDir + path.sep) && resolved !== projectDir) return false;
+    return true;
+  } catch { return false; }
+}
+
+function resolveTaskDir(args) {
+  if (args.taskDir) {
+    if (!validateDirSafe(args.taskDir, args.projectDir)) {
+      console.log(JSON.stringify({ valid: false, errors: [`Invalid --task-dir: ${args.taskDir} (not a directory, is a symlink, or outside project)`] }));
+      process.exit(1);
+    }
+    return args.taskDir;
+  }
+
+  const sid = process.env.AIPILOT_SESSION_ID;
+  if (sid) {
+    if (!/^[a-f0-9]{6}$/.test(sid)) {
+      console.log(JSON.stringify({ valid: false, errors: [`Invalid AIPILOT_SESSION_ID: ${sid}`] }));
+      process.exit(1);
+    }
+    const dir = path.join(args.projectDir, `.task-${sid}`);
+    if (!validateDirSafe(dir, args.projectDir)) {
+      console.log(JSON.stringify({ valid: false, errors: [`Session dir .task-${sid} is invalid (not a directory, is a symlink, or outside project)`] }));
+      process.exit(1);
+    }
+    return dir;
+  }
+
+  const discovered = discoverLatestTaskDir(args.projectDir);
+  if (!discovered) {
+    console.log(JSON.stringify({ valid: false, errors: ['No session directory found. Run orchestrator.sh init first.'] }));
+    process.exit(1);
+  }
+  return discovered;
 }
 
 // --- Output Path ---
@@ -191,7 +289,7 @@ function main() {
   const validTypes = ['plan', 'step-review', 'final-review', 'aggregate'];
 
   if (!args.type || !validTypes.includes(args.type)) {
-    console.error('Usage: validate-review.js --type plan|step-review|final-review|aggregate --project-dir /path [--step-id N]');
+    console.error('Usage: validate-review.js --type plan|step-review|final-review|aggregate --project-dir /path [--step-id N] [--task-dir /path]');
     process.exit(1);
   }
 
@@ -205,12 +303,12 @@ function main() {
     process.exit(1);
   }
 
-  const taskDir = path.join(args.projectDir, '.task');
+  const taskDir = resolveTaskDir(args);
 
   if (args.type === 'aggregate') {
     try {
       if (!fs.existsSync(taskDir)) {
-        console.log(JSON.stringify({ valid: false, errors: [`.task directory not found: ${taskDir}`] }));
+        console.log(JSON.stringify({ valid: false, errors: [`Task directory not found: ${taskDir}`] }));
         process.exit(1);
       }
       const result = aggregateStepResults(taskDir);

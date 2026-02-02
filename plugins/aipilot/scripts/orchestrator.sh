@@ -3,9 +3,9 @@ set -euo pipefail
 
 # Pipeline orchestrator utility script.
 # Usage:
-#   bash orchestrator.sh init [--project-dir /path]     # reset + preflight (single init call)
-#   bash orchestrator.sh reset [--project-dir /path]
-#   bash orchestrator.sh status [--project-dir /path]
+#   bash orchestrator.sh init [--project-dir /path] [--session-id <id>]
+#   bash orchestrator.sh reset [--project-dir /path] [--session-id <id>] [--all] [--force]
+#   bash orchestrator.sh status [--project-dir /path] [--session-id <id>]
 #   bash orchestrator.sh dry-run [--plugin-root /path]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,6 +13,95 @@ PLUGIN_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 TASK_DIR=""
 LOCK_FILE=""
+SESSION_ID=""
+RESET_ALL=false
+RESET_FORCE=false
+
+# --- Structured Logging ---
+
+log_info()  { echo "[INFO] [session=${SESSION_ID:-none}] $*"; }
+log_warn()  { echo "[WARN] [session=${SESSION_ID:-none}] $*" >&2; }
+log_error() { echo "[ERROR] [session=${SESSION_ID:-none}] $*" >&2; }
+
+# --- Session ID Validation ---
+
+validate_session_id() {
+  local id="$1"
+  if [[ ! "$id" =~ ^[a-f0-9]{6}$ ]]; then
+    log_error "Invalid session ID '$id'. Must match ^[a-f0-9]{6}$."
+    exit 1
+  fi
+}
+
+# --- Session ID Generation ---
+
+generate_session_id() {
+  local id
+  if command -v openssl >/dev/null 2>&1; then
+    id=$(openssl rand -hex 3 | tr '[:upper:]' '[:lower:]')
+  elif command -v od >/dev/null 2>&1; then
+    id=$(od -An -tx1 -N3 /dev/urandom | tr -d ' \n' | tr '[:upper:]' '[:lower:]')
+  else
+    log_error "Cannot generate session ID. Install openssl or ensure od is available."
+    exit 1
+  fi
+  echo "$id"
+}
+
+# --- Session Discovery ---
+
+discover_latest_session() {
+  local latest_dir=""
+  local latest_ts=0
+  local valid_count=0
+
+  for entry in "$PROJECT_DIR"/.task-*; do
+    [ -d "$entry" ] || continue
+    # Skip symlinks
+    if [ -L "$entry" ]; then
+      log_warn "Skipping symlink: $entry"
+      continue
+    fi
+    local basename
+    basename=$(basename "$entry")
+    local id="${basename#.task-}"
+    # Validate format
+    if [[ ! "$id" =~ ^[a-f0-9]{6}$ ]]; then
+      log_warn "Skipping invalid session dir: $entry"
+      continue
+    fi
+    # Verify realpath stays under PROJECT_DIR
+    local resolved
+    resolved=$(realpath "$entry" 2>/dev/null || echo "")
+    if [[ -z "$resolved" || ( "$resolved" != "$PROJECT_DIR"/* && "$resolved" != "$PROJECT_DIR" ) ]]; then
+      log_warn "Skipping dir outside project: $entry"
+      continue
+    fi
+    valid_count=$((valid_count + 1))
+    # Check timestamp file, fall back to dir mtime
+    local ts_file="$entry/.session-ts"
+    local ts
+    if [ -f "$ts_file" ]; then
+      ts=$(cat "$ts_file" 2>/dev/null || echo "0")
+    else
+      ts=$(stat -c '%Y' "$entry" 2>/dev/null || stat -f '%m' "$entry" 2>/dev/null || echo "0")
+    fi
+    if [ "$ts" -gt "$latest_ts" ] 2>/dev/null; then
+      latest_ts="$ts"
+      latest_dir="$entry"
+    elif [ "$ts" -eq "$latest_ts" ] 2>/dev/null && [ -n "$latest_dir" ]; then
+      # Deterministic tie-break: lexicographically higher session ID wins
+      if [ "$entry" \> "$latest_dir" ]; then
+        latest_dir="$entry"
+      fi
+    fi
+  done
+
+  if [ -n "$latest_dir" ] && [ "$valid_count" -gt 1 ]; then
+    log_warn "Multiple sessions found ($valid_count). Using latest: $(basename "$latest_dir"). Use --session-id for explicit selection."
+  fi
+  echo "$latest_dir"
+}
 
 # --- Argument Parsing ---
 
@@ -29,6 +118,18 @@ while [[ $# -gt 0 ]]; do
       PLUGIN_ROOT="$2"
       shift 2
       ;;
+    --session-id)
+      SESSION_ID="$2"
+      shift 2
+      ;;
+    --all)
+      RESET_ALL=true
+      shift
+      ;;
+    --force)
+      RESET_FORCE=true
+      shift
+      ;;
     *)
       echo "Unknown option: $1" >&2
       exit 1
@@ -36,24 +137,43 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-TASK_DIR="$PROJECT_DIR/.task"
+# Resolve TASK_DIR based on session ID
+if [ -n "$SESSION_ID" ]; then
+  validate_session_id "$SESSION_ID"
+  TASK_DIR="$PROJECT_DIR/.task-$SESSION_ID"
+fi
 LOCK_FILE="$PROJECT_DIR/.orchestrator.lock"
 
 # --- Locking ---
 
 acquire_lock() {
-  if [ -f "$LOCK_FILE" ]; then
-    local pid
-    pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-      echo "ERROR: Another orchestrator is running (PID $pid). Remove $LOCK_FILE if stale." >&2
-      exit 1
-    fi
-    echo "WARNING: Stale lock file found. Removing." >&2
-    rm -f "$LOCK_FILE"
+  # Use mkdir for atomic lock acquisition (mkdir is atomic on all POSIX systems)
+  # Note: LOCK_DIR must NOT be local — the EXIT trap references it after the function returns
+  LOCK_DIR="${LOCK_FILE}.d"
+  local lock_dir="$LOCK_DIR"
+  if mkdir "$lock_dir" 2>/dev/null; then
+    echo $$ > "$LOCK_FILE"
+    trap 'rm -f "$LOCK_FILE"; rmdir "$LOCK_DIR" 2>/dev/null' EXIT
+    return
   fi
-  echo $$ > "$LOCK_FILE"
-  trap 'rm -f "$LOCK_FILE"' EXIT
+  # Lock dir exists — check if holder is still alive
+  local pid
+  pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    log_error "Another orchestrator is running (PID $pid). Remove $LOCK_FILE if stale."
+    exit 1
+  fi
+  log_warn "Stale lock found. Removing."
+  rm -f "$LOCK_FILE"
+  rmdir "$lock_dir" 2>/dev/null
+  # Retry once
+  if mkdir "$lock_dir" 2>/dev/null; then
+    echo $$ > "$LOCK_FILE"
+    trap 'rm -f "$LOCK_FILE"; rmdir "$LOCK_DIR" 2>/dev/null' EXIT
+    return
+  fi
+  log_error "Failed to acquire lock after retry."
+  exit 1
 }
 
 # --- Reset ---
@@ -61,26 +181,98 @@ acquire_lock() {
 cmd_reset() {
   acquire_lock
 
-  echo "Resetting pipeline artifacts in $TASK_DIR ..."
+  if [ "$RESET_ALL" = true ]; then
+    log_info "Resetting ALL pipeline sessions ..."
+    shopt -s nullglob
+    local deleted=0
+    local skipped=0
+    for entry in "$PROJECT_DIR"/.task-*; do
+      [ -d "$entry" ] || continue
+      # Skip symlinks
+      if [ -L "$entry" ]; then
+        log_warn "Skipping symlink: $entry"
+        skipped=$((skipped + 1))
+        continue
+      fi
+      local basename
+      basename=$(basename "$entry")
+      local id="${basename#.task-}"
+      # Validate format
+      if [[ ! "$id" =~ ^[a-f0-9]{6}$ ]]; then
+        log_warn "Skipping invalid session dir: $entry"
+        skipped=$((skipped + 1))
+        continue
+      fi
+      # Verify realpath stays under PROJECT_DIR
+      local resolved
+      resolved=$(realpath "$entry" 2>/dev/null || echo "")
+      if [[ -z "$resolved" || ( "$resolved" != "$PROJECT_DIR"/* && "$resolved" != "$PROJECT_DIR" ) ]]; then
+        log_warn "Skipping dir outside project: $entry"
+        skipped=$((skipped + 1))
+        continue
+      fi
+      # Active session check (unless --force)
+      if [ "$RESET_FORCE" != true ] && [ -f "$LOCK_FILE" ]; then
+        local lock_pid
+        lock_pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
+        if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null && [ "$$" != "$lock_pid" ]; then
+          log_warn "Skipping active session dir: $entry (PID $lock_pid alive)"
+          skipped=$((skipped + 1))
+          continue
+        fi
+      fi
+      rm -rf -- "$entry"
+      log_info "Removed $basename"
+      deleted=$((deleted + 1))
+    done
+    shopt -u nullglob
+    log_info "Reset complete. Deleted: $deleted, Skipped: $skipped"
+    return
+  fi
+
+  # Single session reset
+  if [ -z "$TASK_DIR" ]; then
+    # No session ID provided; discover latest
+    TASK_DIR=$(discover_latest_session)
+    if [ -z "$TASK_DIR" ]; then
+      log_info "No active sessions found. Nothing to reset."
+      return
+    fi
+    SESSION_ID=$(basename "$TASK_DIR" | sed 's/^\.task-//')
+  fi
+
+  log_info "Resetting pipeline artifacts in $TASK_DIR ..."
 
   if [ -d "$TASK_DIR" ]; then
-    rm -rf "$TASK_DIR"
-    echo "Removed .task/ directory."
+    rm -rf -- "$TASK_DIR"
+    log_info "Removed $(basename "$TASK_DIR") directory."
   fi
   mkdir -p "$TASK_DIR"
-  echo "Pipeline reset complete. Ready for a new run."
+  date +%s > "$TASK_DIR/.session-ts"
+  log_info "Pipeline reset complete. Ready for a new run."
 }
 
 # --- Status ---
 
 cmd_status() {
+  if [ -z "$TASK_DIR" ]; then
+    # No session ID provided; discover latest
+    TASK_DIR=$(discover_latest_session)
+    if [ -z "$TASK_DIR" ]; then
+      echo "No active sessions found."
+      exit 0
+    fi
+    SESSION_ID=$(basename "$TASK_DIR" | sed 's/^\.task-//')
+  fi
+
   if [ ! -d "$TASK_DIR" ]; then
-    echo "No .task/ directory found. Pipeline has not been initialized."
+    echo "Session directory not found: $TASK_DIR"
     exit 0
   fi
 
   echo "=== Pipeline Status ==="
   echo "Project: $PROJECT_DIR"
+  echo "Session: $SESSION_ID ($(basename "$TASK_DIR"))"
   echo ""
 
   # Artifact-based phase detection (mirrors phase-guidance.js logic)
@@ -93,13 +285,13 @@ cmd_status() {
 
   if [ -f "$ui_review" ]; then
     echo "Phase: 7 - UI Verification"
-    echo "Status: $(node -e "console.log(JSON.parse(require('fs').readFileSync('$ui_review','utf8')).status)" 2>/dev/null || echo 'unknown')"
+    echo "Status: $(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).status)' "$ui_review" 2>/dev/null || echo 'unknown')"
   elif [ -f "$code_review" ]; then
     echo "Phase: 6 - Final Review"
-    echo "Status: $(node -e "console.log(JSON.parse(require('fs').readFileSync('$code_review','utf8')).status)" 2>/dev/null || echo 'unknown')"
+    echo "Status: $(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).status)' "$code_review" 2>/dev/null || echo 'unknown')"
   elif [ -f "$impl_result" ]; then
     echo "Phase: 5 - Implementation Complete"
-    echo "Status: $(node -e "console.log(JSON.parse(require('fs').readFileSync('$impl_result','utf8')).status)" 2>/dev/null || echo 'unknown')"
+    echo "Status: $(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).status)' "$impl_result" 2>/dev/null || echo 'unknown')"
   elif ls "$TASK_DIR"/step-*-result.json >/dev/null 2>&1 || ls "$TASK_DIR"/step-*-review.json >/dev/null 2>&1; then
     echo "Phase: 5 - Implementation In Progress"
     local step_results
@@ -109,7 +301,7 @@ cmd_status() {
     echo "Step results: $step_results | Step reviews: $step_reviews"
   elif [ -f "$plan_review" ]; then
     local review_status
-    review_status=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$plan_review','utf8')).status)" 2>/dev/null || echo 'unknown')
+    review_status=$(node -e 'console.log(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).status)' "$plan_review" 2>/dev/null || echo 'unknown')
     if [ "$review_status" = "approved" ]; then
       echo "Phase: 4 - User Review (plan approved by Codex)"
     elif [ "$review_status" = "needs_changes" ]; then
@@ -282,15 +474,20 @@ cmd_help() {
   echo "Usage: orchestrator.sh <command> [options]"
   echo ""
   echo "Commands:"
-  echo "  init      Reset pipeline + run preflight check (use this to start)"
-  echo "  reset     Remove all .task/ artifacts and session markers"
-  echo "  status    Show current pipeline phase (artifact-based)"
+  echo "  init      Initialize a new pipeline session (generates session ID)"
+  echo "  reset     Remove session artifacts (default: latest session)"
+  echo "  status    Show current pipeline phase (default: latest session)"
   echo "  dry-run   Validate setup: scripts, agents, schemas, CLI tools"
   echo "  help      Show this help"
   echo ""
   echo "Options:"
-  echo "  --project-dir /path    Project directory (default: \$CLAUDE_PROJECT_DIR or cwd)"
-  echo "  --plugin-root /path    Plugin root directory (default: auto-detected)"
+  echo "  --project-dir /path       Project directory (default: \$CLAUDE_PROJECT_DIR or cwd)"
+  echo "  --plugin-root /path       Plugin root directory (default: auto-detected)"
+  echo "  --session-id <hex6>       Explicit 6-char hex session ID (default: auto-generated on init, auto-discovered otherwise)"
+  echo ""
+  echo "Reset options:"
+  echo "  --all                     Remove ALL session directories (.task-*)"
+  echo "  --force                   Force removal even if sessions appear active"
 }
 
 # --- Init (reset + preflight in one call) ---
@@ -298,22 +495,30 @@ cmd_help() {
 cmd_init() {
   acquire_lock
 
-  echo "=== Pipeline Init ==="
-  echo "Project: $PROJECT_DIR"
-  echo ""
+  # Generate session ID if not provided
+  if [ -z "$SESSION_ID" ]; then
+    SESSION_ID=$(generate_session_id)
+  fi
+  validate_session_id "$SESSION_ID"
+  TASK_DIR="$PROJECT_DIR/.task-$SESSION_ID"
 
-  # Step 1: Reset — clean slate for new pipeline run
+  log_info "=== Pipeline Init ==="
+  log_info "Project: $PROJECT_DIR"
+  log_info "Session: $SESSION_ID"
+
+  # Step 1: Reset — clean slate for this session
   if [ -d "$TASK_DIR" ]; then
-    rm -rf "$TASK_DIR"
-    echo "Reset: removed existing .task/ directory."
+    rm -rf -- "$TASK_DIR"
+    log_info "Reset: removed existing $(basename "$TASK_DIR") directory."
   fi
   mkdir -p "$TASK_DIR"
+  date +%s > "$TASK_DIR/.session-ts"
 
   # Step 2: Preflight check
   echo ""
   echo "--- Preflight ---"
   if ! command -v node >/dev/null 2>&1; then
-    echo "FAIL: node not found"
+    log_error "FAIL: node not found"
     exit 1
   fi
   echo "  OK  node ($(node --version 2>/dev/null))"
@@ -337,6 +542,10 @@ cmd_init() {
 
   echo ""
   echo "=== Init complete. Create task chain with TaskCreate next. ==="
+  echo ""
+  echo "SESSION_ID=$SESSION_ID"
+  echo "TASK_DIR=$TASK_DIR"
+  echo "export AIPILOT_SESSION_ID=$SESSION_ID"
 }
 
 # --- Main ---

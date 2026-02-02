@@ -9,7 +9,7 @@ allowed-tools: Read, Write, Edit, Bash, Glob, Grep, Task, AskUserQuestion, TaskC
 
 You coordinate worker agents using Task tools, handle user questions, and drive the pipeline to completion with Codex as review gate.
 
-**Task directory:** `${CLAUDE_PROJECT_DIR}/.task/`
+**Task directory:** `${CLAUDE_PROJECT_DIR}/.task-{session-id}/` (set during init)
 **Plugin root:** `${CLAUDE_PLUGIN_ROOT}`
 
 ---
@@ -26,7 +26,11 @@ Execute these two steps IN ORDER. Do NOT skip, reorder, or improvise.
 
 If it fails → ABORT pipeline and tell the user why.
 
-Do NOT create `.task/` yourself. Do NOT write `state.json`. The script handles this.
+From the output, extract the `SESSION_ID=<id>` line. Store this value.
+All subsequent file paths use `.task-{session-id}/` where `{session-id}` is the captured ID.
+Set `TASK_DIR=${CLAUDE_PROJECT_DIR}/.task-{session-id}/`
+
+Do NOT create the task directory manually. Do NOT write `state.json`. The script handles this.
 
 ### Step 1b: Detect pipeline mode
 
@@ -34,7 +38,7 @@ Determine the pipeline mode from the user's input:
 - If the user wrote **"production"** or **"prod"** (case-insensitive) anywhere in their message → mode = `production`
 - Otherwise → mode = `prototype` (default)
 
-Write `.task/pipeline-config.json` using the Write tool:
+Write `${TASK_DIR}/pipeline-config.json` using the Write tool:
 ```json
 { "mode": "prototype" }
 ```
@@ -51,7 +55,7 @@ TaskCreate: "Phase 3: Revise plan (if needed)"             → T3 (blockedBy: [T
 TaskCreate: "Phase 4: User review of plan"                 → T4 (blockedBy: [T3])
 ```
 
-Then write `.task/pipeline-tasks.json` with the REAL IDs:
+Then write `${TASK_DIR}/pipeline-tasks.json` with the REAL IDs:
 ```json
 { "phase1": "<real-T1-id>", "phase2": "<real-T2-id>", "phase3": "<real-T3-id>", "phase4": "<real-T4-id>" }
 ```
@@ -89,10 +93,10 @@ If iteration reaches 25 → STOP and report: "Pipeline safety limit reached (25 
 
 ### Phase 1: Analyze & Plan
 
-Read `.task/pipeline-config.json` to get the current mode. Then:
+Read `${TASK_DIR}/pipeline-config.json` to get the current mode. Then:
 
 ```
-Task({ subagent_type: "aipilot:analyzer", model: "opus", prompt: "<task_description>\n{USER_TASK}\n</task_description>\n\n<pipeline_mode>{MODE}</pipeline_mode>\n\nProject: ${CLAUDE_PROJECT_DIR}", description: "Analyze and plan" })
+Task({ subagent_type: "aipilot:analyzer", model: "opus", prompt: "<task_description>\n{USER_TASK}\n</task_description>\n\n<pipeline_mode>{MODE}</pipeline_mode>\n\nProject: ${CLAUDE_PROJECT_DIR}\n\nSession: TASK_DIR=${TASK_DIR}", description: "Analyze and plan" })
 ```
 
 Replace `{MODE}` with the value from `pipeline-config.json` (e.g. `prototype` or `production`).
@@ -101,7 +105,7 @@ Do NOT summarize output. Main Loop picks up Phase 2.
 
 ### Phase 2: Codex Plan Review
 
-Read `.task/pipeline-config.json` to get the current mode.
+Read `${TASK_DIR}/pipeline-config.json` to get the current mode.
 
 **Step 2a: Read prompt context**
 
@@ -109,8 +113,8 @@ Read these files:
 - `${CLAUDE_PLUGIN_ROOT}/docs/codex-prompts/plan-reviewer.md` (review instructions)
 - `${CLAUDE_PLUGIN_ROOT}/docs/standards-prototype.md` (if mode=prototype) or `standards.md` (if mode=production)
 - `${CLAUDE_PROJECT_DIR}/CLAUDE.md` (if exists -- project rules take precedence)
-- `${CLAUDE_PROJECT_DIR}/.task/plan.md`
-- `${CLAUDE_PROJECT_DIR}/.task/plan.json`
+- `${TASK_DIR}/plan.md`
+- `${TASK_DIR}/plan.json`
 
 **Step 2b: Call Codex via MCP**
 
@@ -133,17 +137,17 @@ If the tool call fails (MCP server unavailable), report to user: "Codex MCP serv
 
 **Step 2c: Write review JSON**
 
-Extract the JSON object from Codex's response (find the outermost `{...}` structure). Parse it. Write to `.task/plan-review.json` using the Write tool.
+Extract the JSON object from Codex's response (find the outermost `{...}` structure). Parse it. Write to `${TASK_DIR}/plan-review.json` using the Write tool.
 
 **Step 2d: Validate**
 
 ```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type plan --project-dir ${CLAUDE_PROJECT_DIR}")
+Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type plan --project-dir ${CLAUDE_PROJECT_DIR} --task-dir ${TASK_DIR}")
 ```
 
-If validation fails (exit code 1), read the validation errors from stdout, fix the JSON accordingly, re-write `.task/plan-review.json`, and re-validate. Max 2 attempts.
+If validation fails (exit code 1), read the validation errors from stdout, fix the JSON accordingly, re-write `${TASK_DIR}/plan-review.json`, and re-validate. Max 2 attempts.
 
-Read `.task/plan-review.json` and handle status:
+Read `${TASK_DIR}/plan-review.json` and handle status:
 
 | Status | Action |
 |--------|--------|
@@ -154,24 +158,24 @@ Read `.task/plan-review.json` and handle status:
 
 ### Phase 3: Plan Revision
 
-Read `.task/pipeline-config.json` to get the current mode. Then:
+Read `${TASK_DIR}/pipeline-config.json` to get the current mode. Then:
 
 ```
-Task({ subagent_type: "aipilot:analyzer", model: "opus", prompt: "<task_description>\n{USER_TASK}\n</task_description>\n\n<review_findings>\n{FINDINGS}\n</review_findings>\n\n<pipeline_mode>{MODE}</pipeline_mode>\n\nProject: ${CLAUDE_PROJECT_DIR}", description: "Revise plan" })
+Task({ subagent_type: "aipilot:analyzer", model: "opus", prompt: "<task_description>\n{USER_TASK}\n</task_description>\n\n<review_findings>\n{FINDINGS}\n</review_findings>\n\n<pipeline_mode>{MODE}</pipeline_mode>\n\nProject: ${CLAUDE_PROJECT_DIR}\n\nSession: TASK_DIR=${TASK_DIR}", description: "Revise plan" })
 ```
 
 After revision → create NEW Phase 2 + Phase 3 tasks to re-review. Max 3 iterations.
 
 ### Phase 4: User Review (ONLY STOP POINT)
 
-Tell user: "Plan ready at `.task/plan.md`." Use `AskUserQuestion`:
+Tell user: "Plan ready at `${TASK_DIR}/plan.md`." Use `AskUserQuestion`:
 - Approved → create implementation tasks (see below)
 - Changes requested → write feedback, create revision tasks. Max 3 iterations
 - Cancel → stop
 
 ### After Phase 4: Create Implementation Tasks
 
-Read `.task/plan.json` for steps. Create per-step tasks in a SEPARATE file `.task/implementation-tasks.json`:
+Read `${TASK_DIR}/plan.json` for steps. Create per-step tasks in a SEPARATE file `${TASK_DIR}/implementation-tasks.json`:
 
 ```
 For each step N:
@@ -183,15 +187,15 @@ TaskCreate: "UI verification"       → blockedBy final review
 
 ### Phase 5a: Implement Step N
 
-Read `.task/pipeline-config.json` to get the current mode. Then:
+Read `${TASK_DIR}/pipeline-config.json` to get the current mode. Then:
 
 ```
-Task({ subagent_type: "aipilot:implementer", model: "opus", prompt: "<step_id>\nN\n</step_id>\n\n<pipeline_mode>{MODE}</pipeline_mode>\n\nProject: ${CLAUDE_PROJECT_DIR}", description: "Implement step N" })
+Task({ subagent_type: "aipilot:implementer", model: "opus", prompt: "<step_id>\nN\n</step_id>\n\n<pipeline_mode>{MODE}</pipeline_mode>\n\nProject: ${CLAUDE_PROJECT_DIR}\n\nSession: TASK_DIR=${TASK_DIR}", description: "Implement step N" })
 ```
 
 ### Phase 5b: Review Step N
 
-Read `.task/pipeline-config.json` to get the current mode.
+Read `${TASK_DIR}/pipeline-config.json` to get the current mode.
 
 **Step 5b-1: Read prompt context and gather code changes**
 
@@ -199,8 +203,8 @@ Read these files:
 - `${CLAUDE_PLUGIN_ROOT}/docs/codex-prompts/code-reviewer.md` (review instructions)
 - `${CLAUDE_PLUGIN_ROOT}/docs/standards-prototype.md` (if mode=prototype) or `standards.md` (if mode=production)
 - `${CLAUDE_PROJECT_DIR}/CLAUDE.md` (if exists -- project rules take precedence)
-- `${CLAUDE_PROJECT_DIR}/.task/plan.json`
-- `${CLAUDE_PROJECT_DIR}/.task/step-N-result.json`
+- `${TASK_DIR}/plan.json`
+- `${TASK_DIR}/step-N-result.json`
 
 Then gather the actual code changes for review:
 - Run `Bash("git diff HEAD~1 -- <files>")` where `<files>` are the `files_changed` from `step-N-result.json`
@@ -228,17 +232,17 @@ If the tool call fails (MCP server unavailable), report to user: "Codex MCP serv
 
 **Step 5b-3: Write review JSON**
 
-Extract the JSON object from Codex's response (find the outermost `{...}` structure). Parse it. Write to `.task/step-N-review.json` using the Write tool.
+Extract the JSON object from Codex's response (find the outermost `{...}` structure). Parse it. Write to `${TASK_DIR}/step-N-review.json` using the Write tool.
 
 **Step 5b-4: Validate**
 
 ```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type step-review --step-id N --project-dir ${CLAUDE_PROJECT_DIR}")
+Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type step-review --step-id N --project-dir ${CLAUDE_PROJECT_DIR} --task-dir ${TASK_DIR}")
 ```
 
-If validation fails (exit code 1), read the validation errors from stdout, fix the JSON accordingly, re-write `.task/step-N-review.json`, and re-validate. Max 2 attempts.
+If validation fails (exit code 1), read the validation errors from stdout, fix the JSON accordingly, re-write `${TASK_DIR}/step-N-review.json`, and re-validate. Max 2 attempts.
 
-Read `.task/step-N-review.json` and handle status:
+Read `${TASK_DIR}/step-N-review.json` and handle status:
 `approved` → continue. `needs_changes` → fix + re-review (max 3). `rejected` → escalate.
 
 ### Phase 5c: Aggregate Implementation Results
@@ -246,14 +250,14 @@ Read `.task/step-N-review.json` and handle status:
 After ALL step implementations and reviews are complete, aggregate the results:
 
 ```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type aggregate --project-dir ${CLAUDE_PROJECT_DIR}")
+Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type aggregate --project-dir ${CLAUDE_PROJECT_DIR} --task-dir ${TASK_DIR}")
 ```
 
-This reads all `step-N-result.json` files and writes `.task/impl-result.json` with the combined status, files, and tests.
+This reads all `step-N-result.json` files and writes `${TASK_DIR}/impl-result.json` with the combined status, files, and tests.
 
 ### Phase 6: Final Review
 
-Read `.task/pipeline-config.json` to get the current mode.
+Read `${TASK_DIR}/pipeline-config.json` to get the current mode.
 
 **Step 6a: Read prompt context and gather code changes**
 
@@ -261,8 +265,8 @@ Read these files:
 - `${CLAUDE_PLUGIN_ROOT}/docs/codex-prompts/code-reviewer.md` (review instructions)
 - `${CLAUDE_PLUGIN_ROOT}/docs/standards-prototype.md` (if mode=prototype) or `standards.md` (if mode=production)
 - `${CLAUDE_PROJECT_DIR}/CLAUDE.md` (if exists -- project rules take precedence)
-- `${CLAUDE_PROJECT_DIR}/.task/plan.json`
-- `${CLAUDE_PROJECT_DIR}/.task/impl-result.json`
+- `${TASK_DIR}/plan.json`
+- `${TASK_DIR}/impl-result.json`
 
 Then gather all code changes for the final review:
 - Read `impl-result.json` to get the full `files_changed` list
@@ -291,23 +295,23 @@ If the tool call fails (MCP server unavailable), report to user: "Codex MCP serv
 
 **Step 6c: Write review JSON**
 
-Extract the JSON object from Codex's response (find the outermost `{...}` structure). Parse it. Write to `.task/code-review.json` using the Write tool.
+Extract the JSON object from Codex's response (find the outermost `{...}` structure). Parse it. Write to `${TASK_DIR}/code-review.json` using the Write tool.
 
 **Step 6d: Validate**
 
 ```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type final-review --project-dir ${CLAUDE_PROJECT_DIR}")
+Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type final-review --project-dir ${CLAUDE_PROJECT_DIR} --task-dir ${TASK_DIR}")
 ```
 
-If validation fails (exit code 1), read the validation errors from stdout, fix the JSON accordingly, re-write `.task/code-review.json`, and re-validate. Max 2 attempts.
+If validation fails (exit code 1), read the validation errors from stdout, fix the JSON accordingly, re-write `${TASK_DIR}/code-review.json`, and re-validate. Max 2 attempts.
 
-Read `.task/code-review.json` and handle status:
+Read `${TASK_DIR}/code-review.json` and handle status:
 `approved` → continue. `needs_changes` → fix + re-review (max 3). `rejected` → escalate.
 
 ### Phase 7: UI Verification (only if `has_ui_changes: true`)
 
 ```
-Task({ subagent_type: "aipilot:ui-verifier", model: "opus", prompt: "<verification_scope>\n{SCOPE}\n</verification_scope>\n\nProject: ${CLAUDE_PROJECT_DIR}", description: "Verify UI" })
+Task({ subagent_type: "aipilot:ui-verifier", model: "opus", prompt: "<verification_scope>\n{SCOPE}\n</verification_scope>\n\nProject: ${CLAUDE_PROJECT_DIR}\n\nSession: TASK_DIR=${TASK_DIR}", description: "Verify UI" })
 ```
 
 ### Completion
@@ -321,7 +325,7 @@ All tasks done → summarize to user.
 ## Mandatory Rules
 
 ### Forbidden Actions
-- Do NOT create `.task/` directory manually — `orchestrator.sh init` does this
+- Do NOT create `${TASK_DIR}/` directory manually — `orchestrator.sh init` does this
 - Do NOT write `state.json` — it is not used
 - Do NOT write `pipeline-tasks.json` with invented IDs — use REAL TaskCreate return values
 - Do NOT call `Task()` before `pipeline-tasks.json` exists
@@ -334,7 +338,7 @@ All tasks done → summarize to user.
 - ALWAYS run `orchestrator.sh init` as the very first tool call
 - ALWAYS use `TaskCreate` to create tasks and use the returned IDs
 - ALWAYS wrap agent input in XML tags
-- ALWAYS write JSON files to `.task/` with pretty-printed formatting (2-space indentation) so they are human-readable
+- ALWAYS write JSON files to `${TASK_DIR}/` with pretty-printed formatting (2-space indentation) so they are human-readable
 - Max 3 review iterations, max 2 UI fix iterations
 - ALWAYS track loop iteration count — STOP at 25 iterations and report to user
 

@@ -23,6 +23,8 @@ The user's task description will appear here.
 If this is a revision, the previous review findings will appear here.
 </review_findings>
 
+The orchestrator provides the task directory path in the prompt as `Project: ... Session: TASK_DIR=...`. Use this path for all artifact reads and writes.
+
 You also have:
 - Access to the full codebase via Read, Glob, Grep tools
 - Access to **WebSearch** and **WebFetch** for online research (use only when needed — e.g. best practices, library documentation, API references, design patterns you're unsure about)
@@ -35,7 +37,7 @@ The orchestrator provides the pipeline mode:
 prototype or production
 </pipeline_mode>
 
-Also readable from `.task/pipeline-config.json` (`{ "mode": "prototype" }`).
+Also readable from `{TASK_DIR}/pipeline-config.json` (`{ "mode": "prototype" }`).
 
 ### Prototype Mode
 - **Testing**: Plan unit tests for core logic only. Integration/E2E tests are not required. Missing edge-case coverage is acceptable.
@@ -51,7 +53,7 @@ Apply the mode when designing the plan: adjust step complexity, test planning, a
 
 ## Output Files
 
-### `.task/plan.md`
+### `{TASK_DIR}/plan.md`
 
 Write a user-friendly, scannable markdown document. The user should understand the plan at a glance without reading JSON. Keep it concise but informative — include key technical decisions and the "why" behind the approach.
 
@@ -88,7 +90,7 @@ Write a user-friendly, scannable markdown document. The user should understand t
 
 The detailed implementation blueprint (pseudocode, data flow, per-file changes) goes in `plan.json`.
 
-### `.task/plan.json`
+### `{TASK_DIR}/plan.json`
 
 Write a detailed structured JSON file. This is the **implementation blueprint** — the implementer agent relies on this to know exactly what to build. Be specific and thorough.
 

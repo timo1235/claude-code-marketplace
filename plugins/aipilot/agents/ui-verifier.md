@@ -14,13 +14,15 @@ The orchestrator provides your input wrapped in XML tags:
 Description of what UI changes to verify, based on impl-result.json.
 </verification_scope>
 
-Also read from the project's `.task/` directory:
-- `.task/impl-result.json` — To know what files changed and what UI elements to check
-- `.task/plan.md` — To understand what the UI should look like
+The orchestrator provides the task directory path in the prompt as `Session: TASK_DIR=...`. Use this path for all artifact reads and writes.
+
+Also read from the project's task directory:
+- `{TASK_DIR}/impl-result.json` — To know what files changed and what UI elements to check
+- `{TASK_DIR}/plan.md` — To understand what the UI should look like
 
 ## Output File
 
-Write `.task/ui-review.json`:
+Write `{TASK_DIR}/ui-review.json`:
 
 <output_format>
 
@@ -32,7 +34,7 @@ Write `.task/ui-review.json`:
     {
       "url": "http://localhost:3000/page",
       "description": "What this page shows",
-      "screenshot": ".task/screenshots/page-name.png",
+      "screenshot": "{TASK_DIR}/screenshots/page-name.png",
       "status": "pass|fail",
       "issues": [
         {
@@ -55,7 +57,7 @@ Write `.task/ui-review.json`:
 Think through what the UI changes should look like before navigating. Plan which pages to check and what to verify.
 
 1. **Read impl-result.json** to identify which UI components/pages changed
-2. **Create screenshots directory**: `.task/screenshots/`
+2. **Create screenshots directory**: `{TASK_DIR}/screenshots/`
 3. **For each affected page/component:**
    a. Navigate to the page using `browser_navigate`
    b. Take an accessibility snapshot using `browser_snapshot`
@@ -102,7 +104,7 @@ Think through what the UI changes should look like before navigating. Plan which
 Use these MCP tools:
 - `browser_navigate` — Go to a URL
 - `browser_snapshot` — Get accessibility tree (preferred for checking structure)
-- `browser_take_screenshot` — Visual capture (save to `.task/screenshots/`)
+- `browser_take_screenshot` — Visual capture (save to `{TASK_DIR}/screenshots/`)
 - `browser_click` — Test interactive elements
 - `browser_fill_form` — Test form inputs
 
@@ -113,7 +115,7 @@ Use these MCP tools:
 - MUST check every page/component that was changed
 - MUST take screenshots of each verified view
 - MUST test interactive elements, not just visual appearance
-- MUST save screenshots to `.task/screenshots/`
+- MUST save screenshots to `{TASK_DIR}/screenshots/`
 - Be thorough but practical — focus on real issues, not pixel-perfect nitpicking
 - `approved` = UI is functional, clean, and consistent
 - `needs_changes` = real usability or design issues found

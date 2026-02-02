@@ -45,6 +45,76 @@ function getModTimeMs(filePath) {
   }
 }
 
+/**
+ * Resolve the session-scoped task directory.
+ * Priority 1: AIPILOT_SESSION_ID env var → .task-{id}/
+ * Priority 2: Scan for .task-* directories, pick latest by timestamp.
+ * Returns absolute path or null.
+ */
+function resolveTaskDir(projectDir) {
+  const sessionId = process.env.AIPILOT_SESSION_ID;
+  if (sessionId) {
+    if (!/^[a-f0-9]{6}$/.test(sessionId)) {
+      console.error(JSON.stringify({ level: 'warn', action: 'discover', reason: 'invalid_env', sessionId }));
+      return null;
+    }
+    const dir = path.join(projectDir, `.task-${sessionId}`);
+    try {
+      const lstat = fs.lstatSync(dir);
+      if (!lstat.isDirectory() || lstat.isSymbolicLink()) return null;
+      const resolved = fs.realpathSync(dir);
+      if (!resolved.startsWith(projectDir + path.sep) && resolved !== projectDir) return null;
+    } catch { return null; }
+    return dir;
+  }
+
+  try {
+    const entries = fs.readdirSync(projectDir);
+    let latestDir = null;
+    let latestTs = 0;
+    let validCount = 0;
+
+    for (const entry of entries) {
+      if (!/^\.task-[a-f0-9]{6}$/.test(entry)) continue;
+      const fullPath = path.join(projectDir, entry);
+
+      try {
+        const lstat = fs.lstatSync(fullPath);
+        if (!lstat.isDirectory()) continue;
+        if (lstat.isSymbolicLink()) continue;
+      } catch { continue; }
+
+      try {
+        const resolved = fs.realpathSync(fullPath);
+        if (!resolved.startsWith(projectDir + path.sep) && resolved !== projectDir) continue;
+      } catch { continue; }
+
+      validCount++;
+      let ts = 0;
+      const tsFile = path.join(fullPath, '.session-ts');
+      try {
+        ts = parseInt(fs.readFileSync(tsFile, 'utf8').trim(), 10) || 0;
+      } catch {
+        try { ts = Math.floor(fs.statSync(fullPath).mtimeMs / 1000); } catch { ts = 0; }
+      }
+
+      if (ts > latestTs) {
+        latestTs = ts;
+        latestDir = fullPath;
+      } else if (ts === latestTs && latestDir) {
+        if (fullPath > latestDir) latestDir = fullPath;
+      }
+    }
+
+    if (latestDir && validCount > 1) {
+      console.error(JSON.stringify({ level: 'warn', action: 'discover', result: 'ambiguous', count: validCount, selected: path.basename(latestDir) }));
+    }
+    return latestDir;
+  } catch {
+    return null;
+  }
+}
+
 function validatePlanReview(taskDir) {
   const reviewPath = path.join(taskDir, 'plan-review.json');
   if (!fileExists(reviewPath)) {
@@ -240,10 +310,10 @@ function findRecentStepReviews(taskDir, now, threshold) {
 
 function main() {
   const projectDir = getProjectDir();
-  const taskDir = path.join(projectDir, '.task');
+  const taskDir = resolveTaskDir(projectDir);
 
-  if (!fileExists(taskDir)) {
-    process.exit(0); // No pipeline active
+  if (!taskDir) {
+    process.exit(0); // No session directory found
     return;
   }
 
