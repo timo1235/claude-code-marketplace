@@ -107,6 +107,8 @@ Parse the opinion JSON (from stdout or Task result) and present it in this forma
 ```
 ## Second Opinion (from [source])
 
+**Status:** [status]
+
 ### Problem Summary
 [problem_summary]
 
@@ -120,7 +122,17 @@ Parse the opinion JSON (from stdout or Task result) and present it in this forma
 [For each suggestion, ordered by confidence:]
 1. **[approach]** (confidence: [confidence])
    [reasoning]
+   **Verification:**
+   [For each verification_step, as a bulleted list]
+
+### Remaining Concerns
+[remaining_concerns or 'None']
 ```
+
+Based on the status field, provide a one-line actionable summary:
+- resolved: 'The most likely fix is [approach 1]. Verify with [first verification_step].'
+- partially_resolved: 'Start by investigating [approach 1] to narrow down the issue.'
+- requires_user_input: 'More information is needed. The analysis is speculative.'
 
 After presenting, assess the quality: If the analysis is generic (doesn't reference specific files or code), superficial (restates the problem without new insight), or contradicts observable evidence, tell the user that the opinion quality is limited and explain why.
 

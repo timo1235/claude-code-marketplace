@@ -43,6 +43,9 @@ const SECOND_OPINION_PROMPT = `You are a senior debugging specialist providing a
 3. Identify assumptions in the prior attempts that may be incorrect
 4. Formulate your own root cause hypothesis based on the evidence
 5. Propose 3-4 alternative approaches ordered by confidence level
+6. Assess the overall status: set 'resolved' if you have at least one high-confidence suggestion with strong code evidence, 'partially_resolved' if your best suggestion is medium confidence, 'requires_user_input' if all suggestions are speculative or you need more information from the user
+7. For each suggestion, include concrete verification_steps — specific shell commands, test runs, or manual checks the developer can perform to confirm the fix works
+8. Note any remaining_concerns — edge cases, caveats, environmental factors, or follow-up items that could affect the diagnosis. Set to null if none.
 
 Focus your analysis on:
 - Root causes the prior attempts may have missed (look for off-by-one layers: is the real bug one function/file/abstraction level away from where they looked?)
@@ -235,6 +238,21 @@ function validateOutput(content) {
 
   if (parsed.analysis && parsed.analysis.length < 20) {
     errors.push('Analysis is too short (minimum 20 characters)');
+  }
+
+  if (!parsed.status) errors.push('Missing required field: status');
+  else if (!['resolved', 'partially_resolved', 'requires_user_input'].includes(parsed.status)) {
+    errors.push('Invalid status value: must be resolved, partially_resolved, or requires_user_input');
+  }
+
+  if (parsed.remaining_concerns === undefined) errors.push('Missing required field: remaining_concerns (use null if none)');
+
+  if (Array.isArray(parsed.suggestions)) {
+    parsed.suggestions.forEach((s, i) => {
+      if (!Array.isArray(s.verification_steps)) {
+        errors.push(`suggestions[${i}] missing verification_steps array`);
+      }
+    });
   }
 
   return { valid: errors.length === 0, errors, parsed };

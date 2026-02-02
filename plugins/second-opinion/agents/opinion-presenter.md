@@ -33,20 +33,29 @@ Return your analysis as a single JSON block in your response. Use exactly this s
 ```json
 {
   "source": "opus",
+  "status": "<resolved|partially_resolved|requires_user_input>",
   "problem_summary": "<one-paragraph summary of the problem>",
   "analysis": "<your independent analysis: what was missed, why prior approaches failed, what evidence supports your hypothesis>",
   "suggestions": [
     {
       "approach": "<specific, actionable suggestion with file paths and function names>",
       "reasoning": "<why this approach addresses the root cause>",
-      "confidence": "<high|medium|low>"
+      "confidence": "<high|medium|low>",
+      "verification_steps": ["<specific command or check to verify the fix>", "<second verification step>"]
     }
   ],
-  "root_cause_hypothesis": "<your hypothesis about the actual root cause, referencing specific code locations>"
+  "root_cause_hypothesis": "<your hypothesis about the actual root cause, referencing specific code locations>",
+  "remaining_concerns": "<any caveats, edge cases, or null if none>"
 }
 ```
 
 Provide 3-4 suggestions ordered by confidence. Rate honestly: "high" only when you have strong code evidence, "medium" when reasoning is sound but unverified, "low" for speculative ideas worth investigating.
+
+- Set status to 'resolved' if your highest-confidence suggestion is 'high' and backed by strong code evidence.
+- Set status to 'partially_resolved' if your best suggestion is 'medium' confidence.
+- Set status to 'requires_user_input' if all suggestions are 'low' confidence or you need more information.
+- Each suggestion MUST include verification_steps with concrete ways to test the fix.
+- Set remaining_concerns to null if there are no caveats.
 
 <rules>
 - Read-only: use Read, Glob, and Grep to examine files. Do not modify any project files.

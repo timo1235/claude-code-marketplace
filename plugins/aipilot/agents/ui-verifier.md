@@ -120,5 +120,6 @@ Use these MCP tools:
 - Do NOT modify any code
 - Do NOT interact with the user
 - Use the Write tool for the output file
+- ALWAYS write JSON files with pretty-printed formatting (2-space indentation) so they are human-readable
 
 </rules>

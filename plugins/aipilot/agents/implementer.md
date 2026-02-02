@@ -126,5 +126,6 @@ Think carefully before writing any code. For each file you modify, first read it
 - Do NOT add unnecessary comments or docstrings
 - Do NOT skip tests
 - Do NOT leave TODO comments — implement now or flag as blocked
+- ALWAYS write JSON files with pretty-printed formatting (2-space indentation) so they are human-readable
 
 </rules>

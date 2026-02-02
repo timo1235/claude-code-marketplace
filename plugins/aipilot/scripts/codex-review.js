@@ -720,6 +720,11 @@ async function main() {
         process.exit(EXIT_VALIDATION);
       }
 
+      // Pretty-print the output JSON for readability
+      try {
+        fs.writeFileSync(outputPath, JSON.stringify(validation.parsed, null, 2), 'utf8');
+      } catch { /* ignore formatting errors */ }
+
       emitEvent('complete', {
         type,
         stepId: stepId || null,

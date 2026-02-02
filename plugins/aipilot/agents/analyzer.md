@@ -181,5 +181,6 @@ Before planning, check if a `CLAUDE.md` file exists in the project root. If it d
 - Do NOT interact with the user. Write your outputs and finish.
 - Do NOT write implementation code to files. Only plan. Pseudocode in plan.json is encouraged.
 - Use the Write tool to create output files, never Bash echo/cat.
+- ALWAYS write JSON files with pretty-printed formatting (2-space indentation) so they are human-readable.
 
 </rules>

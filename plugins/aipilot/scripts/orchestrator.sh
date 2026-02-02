@@ -226,8 +226,8 @@ cmd_dry_run() {
       echo "  OK  $tool ($version)"
     else
       if [ "$tool" = "codex" ]; then
-        echo "  FAIL  $tool (required for reviews)"
-        errors=$((errors + 1))
+        echo "  WARN  $tool (optional - needed for Codex-powered reviews)"
+        # Codex is optional; don't increment errors
       else
         echo "  FAIL  $tool (required)"
         errors=$((errors + 1))
@@ -273,8 +273,8 @@ cmd_dry_run() {
       errors=$((errors + 1))
     fi
   else
-    echo "  SKIP  Codex not installed"
-    errors=$((errors + 1))
+    echo "  SKIP  Codex not installed (reviews will use fallback or manual mode)"
+    # Codex is optional; don't increment errors
   fi
 
   echo ""

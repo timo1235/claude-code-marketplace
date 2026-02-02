@@ -218,6 +218,7 @@ All tasks done → summarize to user.
 - ALWAYS run `orchestrator.sh init` as the very first tool call
 - ALWAYS use `TaskCreate` to create tasks and use the returned IDs
 - ALWAYS wrap agent input in XML tags
+- ALWAYS write JSON files to `.task/` with pretty-printed formatting (2-space indentation) so they are human-readable
 - Max 3 review iterations, max 2 UI fix iterations
 - ALWAYS track loop iteration count — STOP at 25 iterations and report to user
 
