@@ -58,13 +58,17 @@ For ollama, omit the `api_key` field.
 
 ## Step 4: Run Indexing
 
-Tell the user that indexing will now start, then run:
+Tell the user that indexing will now start. **Important**: If the config file is NOT at the project root (`.chunkhound.json`), you MUST pass `--config` with the full absolute path. ChunkHound only auto-discovers `.chunkhound.json` in the project root — it does not search subdirectories like `.claude/`.
 
 ```bash
+# Config at project root - no flag needed:
 chunkhound index
+
+# Config in .claude/ or other subdirectory - explicit path required:
+chunkhound index --config /absolute/path/to/.claude/.chunkhound.json
 ```
 
-This may produce substantial output. If it succeeds, confirm that the `.chunkhound/` or `.claude/.chunkhound/` database directory was created.
+Use the actual path where the config was created in Step 3. This may produce substantial output. If it succeeds, confirm that the database directory was created.
 
 ## Step 5: Verify
 
