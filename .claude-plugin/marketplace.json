@@ -20,6 +20,11 @@
       "name": "second-opinion",
       "source": "./plugins/second-opinion",
       "category": "productivity"
+    },
+    {
+      "name": "chunkhound-integration",
+      "source": "./plugins/chunkhound-integration",
+      "category": "code-intelligence"
     }
   ]
 }

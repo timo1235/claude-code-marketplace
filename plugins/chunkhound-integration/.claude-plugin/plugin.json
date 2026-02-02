@@ -1,0 +1,19 @@
+{
+  "name": "chunkhound-integration",
+  "version": "1.0.3",
+  "description": "Semantic code research using ChunkHound's multi-hop search and LLM synthesis",
+  "author": {
+    "name": "Timo",
+    "url": "https://github.com/timo1235"
+  },
+  "license": "MIT",
+  "keywords": [
+    "code-research",
+    "semantic-search",
+    "architecture",
+    "codebase-intelligence",
+    "chunkhound",
+    "mcp"
+  ],
+  "homepage": "https://chunkhound.github.io/"
+}
