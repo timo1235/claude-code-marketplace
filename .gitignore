@@ -34,5 +34,11 @@ node_modules/
 # BATS testing framework
 .bats/
 
+# Pipeline state
+.task/
+
+# ChunkHound local database
+.chunkhound/
+
 # Reference plugins (cloned for analysis)
 reference/
