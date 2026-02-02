@@ -82,8 +82,8 @@ if [[ "${db_path}" != /* ]]; then
     db_path="${PROJECT_ROOT}/${db_path}"
 fi
 
-# --- Guard: only start if the index database directory exists ---
-if [[ ! -d "${db_path}" ]]; then
+# --- Guard: only start if the index database exists (file or directory) ---
+if [[ ! -e "${db_path}" ]]; then
     exit 0
 fi
 
