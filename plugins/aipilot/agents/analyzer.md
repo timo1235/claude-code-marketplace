@@ -27,6 +27,7 @@ The orchestrator provides the task directory path in the prompt as `Project: ...
 
 You also have:
 - Access to the full codebase via Read, Glob, Grep tools
+- Access to **Write** tool to create output files (never use Bash echo/cat)
 - Access to **WebSearch** and **WebFetch** for online research (use only when needed — e.g. best practices, library documentation, API references, design patterns you're unsure about)
 
 ## Pipeline Mode
@@ -53,42 +54,112 @@ Apply the mode when designing the plan: adjust step complexity, test planning, a
 
 ## Output Files
 
+### Generation Order
+
+1. **First**: Generate `plan.json` — this is the authoritative source of truth
+2. **Then**: Derive `plan.md` by rendering plan.json in human-readable markdown
+
+This order ensures consistency. plan.md MUST NOT contain information absent from plan.json.
+
 ### `{TASK_DIR}/plan.md`
 
-Write a user-friendly, scannable markdown document. The user should understand the plan at a glance without reading JSON. Keep it concise but informative — include key technical decisions and the "why" behind the approach.
+Render the plan.json structure as a comprehensive markdown document. Use clear section headers, pseudocode in fenced code blocks, and ASCII diagrams for visualization. The user should understand exactly what will be built.
 
 <output_format>
 
-```markdown
+~~~markdown
 # Implementation Plan: [Title]
 
 ## Task
 [1-2 sentences restating the requirement in plain language]
 
 ## Analysis
-[What you found — bullet points, key findings from codebase exploration]
+[Bullet points of key findings from codebase exploration]
 
 ## Approach
-[High-level strategy in 2-3 sentences — why this approach, what alternatives were considered]
+[2-3 sentences on strategy and alternatives considered]
 
 ## Steps
 
 ### Step 1: [Title]
-[2-4 sentences: what changes, which components are affected, key logic]
+**Action:** create|modify|delete
+**Files:** `path/to/file.ts`, `path/to/other.ts`
+**Depends on:** Step N (or "None")
 
-### Step 2: [Title]
-[2-4 sentences: what changes, which components are affected, key logic]
+[2-4 sentences describing what this step accomplishes and why]
 
-## UI Changes
-[If applicable — describe what the user will see differently. "None" if no UI changes]
+#### Changes
 
-## Risks
-[Bullet points of what could go wrong]
+**`path/to/file.ts`**
+[Description of what changes in this file]
+
+```pseudocode
+// Implementation approach - function signatures, logic flow
+function exampleFunction(input: Type): ReturnType
+    validate input
+    transform data
+    handle errors
+    return result
 ```
 
-</output_format>
+#### Data Flow
+```
+User Action
+    |
+    v
+Frontend Handler --> API Call --> Backend Processing
+                                        |
+                                        v
+                                   Response --> UI Update
+```
 
-The detailed implementation blueprint (pseudocode, data flow, per-file changes) goes in `plan.json`.
+---
+
+(Repeat ### Step N for each step)
+
+## UI Changes
+
+(Include this section only if has_ui_changes is true. Otherwise write "None")
+
+### Before
+```
++------------------+
+| Current Layout   |
+|  [Existing UI]   |
++------------------+
+```
+
+### After
+```
++------------------+
+| Updated Layout   |
+|  [New Elements]  |
++------------------+
+```
+
+### Component Hierarchy
+```
+App
+├── Layout
+│   └── Page
+│       ├── ComponentA (modified)
+│       │   └── NewChild (new)
+│       └── ComponentB
+```
+
+## Files Affected
+
+| File | Action |
+|------|--------|
+| `path/to/new.ts` | create |
+| `path/to/existing.ts` | modify |
+| `path/to/old.ts` | delete |
+
+## Risks
+[Bullet points of potential issues and mitigations]
+~~~
+
+</output_format>
 
 ### `{TASK_DIR}/plan.json`
 
@@ -132,6 +203,8 @@ Write a detailed structured JSON file. This is the **implementation blueprint** 
 
 </output_format>
 
+**Note**: The `files_affected` object is derived metadata — aggregate it from `steps[].files` and `steps[].action` to ensure consistency.
+
 #### Step detail guidelines
 
 The `changes` array and `data_flow` field are the core of the plan. They must give the implementer enough information to write code without guessing the architecture:
@@ -167,10 +240,17 @@ Before planning, check if a `CLAUDE.md` file exists in the project root. If it d
 - Never exceed 5 steps. If the task seems to need more, group related changes into a single step.
 
 ### plan.md Formatting
-- plan.md must be **user-friendly and scannable**: Clear structure, concise descriptions. No code blocks.
-- The user should understand what will happen **at a glance**.
-- Technical context (component names, key decisions) is OK in plan.md. Pseudocode and per-file details belong in `plan.json`.
-- Use bullet points, keep step descriptions to 2-4 sentences.
+- plan.md is a **human-readable rendering of plan.json** — it MUST NOT introduce content absent from plan.json.
+- Use clear section headers, pseudocode in fenced code blocks, and ASCII diagrams for visualization.
+- **Complexity guardrails** (scale detail to task complexity):
+  - **Simple tasks**: Pseudocode and diagrams are optional; a clear description suffices
+  - **Medium/complex tasks**: Include pseudocode for core logic; include data flow diagrams
+  - ASCII diagrams: Limit to essential flows; collapse repetitive patterns into summaries
+  - Pseudocode: Focus on core logic per step; omit boilerplate like imports/exports
+  - UI mockups: Show only changed portions, not entire screens
+- For UI changes: Include before/after ASCII mockups and component hierarchy trees.
+- For data flow: Use ASCII sequence diagrams showing data movement through the system.
+- The Files Affected table aggregates file operations from all steps.
 
 ### General
 - MUST read existing code before planning. Never plan changes to code you haven't read.
