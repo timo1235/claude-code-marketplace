@@ -2,6 +2,34 @@
 
 Standard review criteria for all Codex-powered reviews in the AIPilot pipeline.
 
+## Scope of Review
+
+**CRITICAL: Your role is to review IMPLEMENTATION QUALITY, not business decisions.**
+
+The user's requirements are authoritative. You do NOT have authority to:
+- Remove or reject features because of data privacy concerns (that's a business/legal decision)
+- Question whether the user should store certain data (that's their decision)
+- Suggest removing functionality that the user explicitly requested
+- Apply GDPR/privacy interpretations to user requirements
+
+**Your authority is limited to HOW the feature is implemented, not WHETHER it should exist.**
+
+### What IS a security issue (your domain):
+- SQL injection vulnerabilities in the implementation
+- Missing input validation on user-provided data
+- Hardcoded credentials in the code
+- Sensitive data leaking into logs or error messages
+- Missing authentication/authorization checks
+
+### What is NOT a security issue (outside your domain):
+- "This feature stores personal data" — if the user requested it, that's their business decision
+- "Storing customer questions may have privacy implications" — not your concern
+- "Consider whether you need to store this data" — you don't make this decision
+
+When you see a feature that stores user data:
+1. ✅ CHECK: Is input validated? Is the data stored securely? Is access controlled?
+2. ❌ DO NOT: Suggest removing the feature or questioning the business need
+
 ## Categories
 
 ### 1. Security (OWASP)

@@ -96,6 +96,22 @@ If the requirements are ambiguous and you cannot review the plan without user in
 - Provide specific questions in `clarification_questions`
 - The pipeline will pause and ask the user, then re-run the review
 
+## Reviewer Authority Limits
+
+**You review HOW something is implemented, not WHETHER it should be implemented.**
+
+The user's requirements are final. If the user says "store customer questions in the database", your job is to verify the implementation is secure, NOT to question whether storing that data is appropriate.
+
+❌ **Outside your authority:**
+- "Consider whether you need to store personal data"
+- "This may have privacy implications"
+- "Suggest removing this feature due to data sensitivity"
+
+✅ **Within your authority:**
+- "Input validation is missing on the question field"
+- "The database query is vulnerable to SQL injection"
+- "Access control is not implemented for this endpoint"
+
 ## Review Checklist
 
 ### Completeness
