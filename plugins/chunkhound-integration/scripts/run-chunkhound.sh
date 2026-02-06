@@ -82,8 +82,21 @@ if [[ "${db_path}" != /* ]]; then
     db_path="${PROJECT_ROOT}/${db_path}"
 fi
 
-# --- Guard: only start if the index database exists (file or directory) ---
+# --- Guard: only start if the index database exists AND has been indexed ---
+# chunkhound mcp creates an empty database on startup, so we need to check
+# for actual indexed content, not just the db file/directory existing.
+# We use a .indexed marker file that chunkhound-init writes after indexing.
 if [[ ! -e "${db_path}" ]]; then
+    exit 0
+fi
+
+# Resolve the parent directory of the db file (e.g. .chunkhound/ from .chunkhound/db)
+db_dir="${db_path}"
+if [[ -f "${db_path}" ]]; then
+    db_dir="$(dirname "${db_path}")"
+fi
+
+if [[ ! -f "${db_dir}/.indexed" ]]; then
     exit 0
 fi
 

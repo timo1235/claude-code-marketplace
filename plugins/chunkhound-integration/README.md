@@ -97,9 +97,11 @@ The plugin auto-discovers `.chunkhound.json` in multiple locations (last match w
 ```bash
 cd /path/to/your/project
 chunkhound index
+# Create marker file so the MCP server knows the index is real
+touch .chunkhound/.indexed
 ```
 
-This creates a `.chunkhound/` directory with the vector database.
+This creates a `.chunkhound/` directory with the vector database. The `.indexed` marker file tells the plugin's MCP guard that the database was intentionally indexed (not just auto-created by `chunkhound mcp`).
 
 ### 4. Restart Claude Code
 
@@ -175,6 +177,7 @@ Diagnoses installation, index health, and MCP connectivity.
 Run indexing in your project:
 ```bash
 chunkhound index
+touch .chunkhound/.indexed
 ```
 
 ### "Embedding error"

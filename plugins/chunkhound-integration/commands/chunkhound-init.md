@@ -70,6 +70,13 @@ chunkhound index --config /absolute/path/to/.claude/.chunkhound.json
 
 Use the actual path where the config was created in Step 3. This may produce substantial output. If it succeeds, confirm that the database directory was created.
 
+After successful indexing, create the marker file that the MCP server guard checks:
+```bash
+# Write marker file so the MCP server knows this db was indexed (not just auto-created)
+touch <database_directory>/.indexed
+```
+Where `<database_directory>` is the directory containing the DuckDB file (e.g. `.chunkhound/` or `.claude/.chunkhound/`).
+
 ## Step 5: Verify
 
 After indexing completes, inform the user:
