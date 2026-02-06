@@ -35,11 +35,11 @@ If you notice yourself thinking any of these, STOP IMMEDIATELY:
 | Dangerous thought | What to do instead |
 |-------------------|---------------------|
 | "I'll skip the review to save time" | STOP. Time is not your concern. Review integrity is. |
-| "The plan was already reviewed, so..." | STOP. Plan review ≠ implementation review. Each is mandatory. |
+| "The plan was already reviewed, so..." | STOP. Plan review ≠ final code review. The final review is mandatory. |
 | "Given time constraints..." | STOP. You have no time constraints. The pipeline takes as long as it takes. |
 | "To keep things moving efficiently..." | STOP. "Efficiency" that skips reviews is sabotage, not optimization. |
 | "I'll proceed with the next step anyway" | STOP. You proceed ONLY when reviews complete and approve. |
-| "These steps are similar, so one review covers both" | STOP. Each step gets its own review. No exceptions. |
+| "I can skip the final review since steps were simple" | STOP. The final review is mandatory. No exceptions. |
 
 When you catch yourself with these thoughts: **Ask the user what to do.** Do not solve the problem yourself by skipping steps.
 
@@ -69,11 +69,40 @@ Determine the pipeline mode from the user's input:
 - If the user wrote **"production"** or **"prod"** (case-insensitive) anywhere in their message → mode = `production`
 - Otherwise → mode = `prototype` (default)
 
-Write `${TASK_DIR}/pipeline-config.json` using the Write tool:
+Write `${TASK_DIR}/pipeline-config.json` using the Write tool (with the detected mode only — review_model is added in Step 1c):
 ```json
 { "mode": "prototype" }
 ```
 (or `"production"` if detected)
+
+### Step 1c: Select review model
+
+Use `AskUserQuestion` to let the user choose the review model:
+
+```
+AskUserQuestion({
+  questions: [{
+    question: "Which model should be used for Codex reviews (plan review + final review)?",
+    header: "Review Model",
+    options: [
+      { label: "Codex (Recommended)", description: "Uses gpt-5 via mcp__codex__codex — fastest, cheapest for reviews" },
+      { label: "Opus", description: "Uses mcp__codex__codex with model override — highest quality, slower" },
+      { label: "Sonnet", description: "Uses mcp__codex__codex with model override — balanced speed/quality" }
+    ],
+    multiSelect: false
+  }]
+})
+```
+
+Map the selection to a model value:
+- "Codex (Recommended)" → `"gpt-5"`
+- "Opus" → `"opus"`
+- "Sonnet" → `"sonnet"`
+
+Update `${TASK_DIR}/pipeline-config.json` to include the review model:
+```json
+{ "mode": "prototype", "review_model": "gpt-5" }
+```
 
 ### Step 2: Create task chain
 
@@ -119,7 +148,7 @@ If iteration reaches 25 → STOP and report: "Pipeline safety limit reached (25 
 **CRITICAL: `blockedBy` dependencies are STRICT enforcement barriers, not suggestions.**
 
 - A task with non-empty `blockedBy` CANNOT be started — period
-- Review tasks block implementation tasks to enforce the review gate
+- Sequential dependencies enforce execution order
 - You MUST wait for the blocking task to complete before proceeding
 - If all remaining tasks are blocked, report to user — do NOT "optimize" by skipping blockers
 - NEVER rationalize bypassing blockedBy with "efficiency" or "time constraints"
@@ -144,7 +173,7 @@ Do NOT summarize output. Main Loop picks up Phase 2.
 
 ### Phase 2: Codex Plan Review
 
-Read `${TASK_DIR}/pipeline-config.json` to get the current mode.
+Read `${TASK_DIR}/pipeline-config.json` to get the current mode and `review_model`. Replace `{REVIEW_MODEL}` in all Codex calls with the `review_model` value from the config.
 
 **Step 2a: Read prompt context**
 
@@ -169,7 +198,7 @@ Assemble a prompt containing:
 
 Call:
 ```
-mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "gpt-5" })
+mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "{REVIEW_MODEL}" })
 ```
 
 If the tool call fails (MCP server unavailable), report to user: "Codex MCP server not available. Run /pipeline-check for diagnostics."
@@ -203,13 +232,13 @@ Read `${TASK_DIR}/pipeline-config.json` to get the current mode. Then:
 Task({ subagent_type: "aipilot:analyzer", model: "opus", prompt: "<task_description>\n{USER_TASK}\n</task_description>\n\n<review_findings>\n{FINDINGS}\n</review_findings>\n\n<pipeline_mode>{MODE}</pipeline_mode>\n\nProject: ${CLAUDE_PROJECT_DIR}\n\nSession: TASK_DIR=${TASK_DIR}", description: "Revise plan" })
 ```
 
-After revision → create NEW Phase 2 + Phase 3 tasks to re-review. Max 3 iterations.
+After revision → mark Phase 3 complete → proceed directly to Phase 4. **Do NOT create a new Phase 2 review.** The plan was already reviewed once by Codex; the revision incorporates those findings.
 
 ### Phase 4: User Review (ONLY STOP POINT)
 
 Tell user: "Plan ready at `${TASK_DIR}/plan.md`." Use `AskUserQuestion`:
 - Approved → create implementation tasks (see below)
-- Changes requested → write feedback, create revision tasks. Max 3 iterations
+- Changes requested → write feedback to `${TASK_DIR}/user-plan-feedback.json`, then Opus revises (same as Phase 3 but with user feedback instead of Codex findings). **No Codex re-review** — loop back to Phase 4 (User Review). Max 3 iterations.
 - Cancel → stop
 
 ### After Phase 4: Create Implementation Tasks
@@ -218,13 +247,9 @@ Read `${TASK_DIR}/plan.json` for steps. Create per-step tasks in a SEPARATE file
 
 ```
 For each step N:
-  TaskCreate: "Implement step N"    → T-impl-N
-  TaskCreate: "Review step N"       → T-review-N (blockedBy: T-impl-N)
+  TaskCreate: "Implement step N"    → T-impl-N (blockedBy: T-impl-(N-1) or last plan task if N=1)
 
-  # CRITICAL: Step N+1 implementation is blocked by Step N REVIEW (not implementation)
-  # This ensures: impl-1 → review-1 → impl-2 → review-2 → ...
-
-TaskCreate: "Final review"          → blockedBy last T-review
+TaskCreate: "Final review"          → blockedBy last T-impl
 TaskCreate: "UI verification"       → blockedBy final review
 ```
 
@@ -232,14 +257,12 @@ TaskCreate: "UI verification"       → blockedBy final review
 
 The task chain MUST be:
 ```
-impl-1 → review-1 → impl-2 → review-2 → impl-3 → review-3 → final-review
-         ↑                    ↑                    ↑
-      GATE                 GATE                 GATE
+impl-1 → impl-2 → impl-3 → aggregate → final-review
 ```
 
-- Each review task blocks the NEXT implementation task
-- You CANNOT start `impl-N+1` until `review-N` status = `approved`
-- Parallel implementation is FORBIDDEN — it bypasses the review gates
+- Implementations run sequentially: `impl-N+1` is blocked by `impl-N`
+- There are NO step-level reviews — only the final review at the end
+- Parallel implementation is FORBIDDEN
 - If you see multiple implementations running simultaneously, something is WRONG
 
 ### Phase 5a: Implement Step N
@@ -250,61 +273,9 @@ Read `${TASK_DIR}/pipeline-config.json` to get the current mode. Then:
 Task({ subagent_type: "aipilot:implementer", model: "opus", prompt: "<step_id>\nN\n</step_id>\n\n<pipeline_mode>{MODE}</pipeline_mode>\n\nProject: ${CLAUDE_PROJECT_DIR}\n\nSession: TASK_DIR=${TASK_DIR}", description: "Implement step N" })
 ```
 
-### Phase 5b: Review Step N
+### Phase 5b: Aggregate Implementation Results
 
-Read `${TASK_DIR}/pipeline-config.json` to get the current mode.
-
-**Step 5b-1: Read prompt context and gather code changes**
-
-Read these files:
-- `${CLAUDE_PLUGIN_ROOT}/docs/codex-prompts/code-reviewer.md` (review instructions)
-- `${CLAUDE_PLUGIN_ROOT}/docs/standards-prototype.md` (if mode=prototype) or `standards.md` (if mode=production)
-- `${CLAUDE_PROJECT_DIR}/CLAUDE.md` (if exists -- project rules take precedence)
-- `${TASK_DIR}/plan.json`
-- `${TASK_DIR}/step-N-result.json`
-
-Then gather the actual code changes for review:
-- Run `Bash("git diff HEAD~1 -- <files>")` where `<files>` are the `files_changed` from `step-N-result.json`
-- If git diff is empty or unavailable, read the full content of each changed file instead
-
-**Step 5b-2: Call Codex via MCP**
-
-Assemble a prompt containing:
-- Pipeline mode
-- The content of code-reviewer.md (review criteria and output format)
-- Reference to the standards (include content or path)
-- Project CLAUDE.md content (if exists)
-- The plan.json content and step-N-result.json content
-- **The code changes** (git diff output or full file contents from step 5b-1)
-- Project directory: `${CLAUDE_PROJECT_DIR}`
-- Guardrail: "Only explore files within the project directory above. Do not access files outside the project."
-- Instruction: "Review ONLY the changes from step N. Return your review as a single JSON object matching the step review output format specified above. Do not wrap in markdown code fences."
-
-Call:
-```
-mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "gpt-5" })
-```
-
-If the tool call fails (MCP server unavailable), report to user: "Codex MCP server not available. Run /pipeline-check for diagnostics."
-
-**Step 5b-3: Write review JSON**
-
-Extract the JSON object from Codex's response (find the outermost `{...}` structure). Parse it. Write to `${TASK_DIR}/step-N-review.json` using the Write tool.
-
-**Step 5b-4: Validate**
-
-```
-Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type step-review --step-id N --project-dir ${CLAUDE_PROJECT_DIR} --task-dir ${TASK_DIR}")
-```
-
-If validation fails (exit code 1), read the validation errors from stdout, fix the JSON accordingly, re-write `${TASK_DIR}/step-N-review.json`, and re-validate. Max 2 attempts.
-
-Read `${TASK_DIR}/step-N-review.json` and handle status:
-`approved` → continue. `needs_changes` → fix + re-review (max 3). `rejected` → escalate.
-
-### Phase 5c: Aggregate Implementation Results
-
-After ALL step implementations and reviews are complete, aggregate the results:
+After ALL step implementations are complete, aggregate the results:
 
 ```
 Bash("node ${CLAUDE_PLUGIN_ROOT}/scripts/validate-review.js --type aggregate --project-dir ${CLAUDE_PROJECT_DIR} --task-dir ${TASK_DIR}")
@@ -314,7 +285,7 @@ This reads all `step-N-result.json` files and writes `${TASK_DIR}/impl-result.js
 
 ### Phase 6: Final Review
 
-Read `${TASK_DIR}/pipeline-config.json` to get the current mode.
+Read `${TASK_DIR}/pipeline-config.json` to get the current mode and `review_model`. Replace `{REVIEW_MODEL}` with the `review_model` value from the config.
 
 **Step 6a: Read prompt context and gather code changes**
 
@@ -345,7 +316,7 @@ Assemble a prompt containing:
 
 Call:
 ```
-mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "gpt-5" })
+mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "{REVIEW_MODEL}" })
 ```
 
 If the tool call fails (MCP server unavailable), report to user: "Codex MCP server not available. Run /pipeline-check for diagnostics."
@@ -405,9 +376,9 @@ Before marking ANY task complete and moving to the next:
 
 ```
 VERIFY:
-1. Is this a review task? → Did Codex actually review it? (Not you, CODEX)
-2. Is the next task blocked by this one? → Will completing this unblock an implementation?
-3. Am I about to start an implementation? → Is the previous review APPROVED?
+1. Is this the final review task? → Did Codex actually review it? (Not you, CODEX)
+2. Is the next task blocked by this one? → Will completing this unblock the next step?
+3. Am I about to start an implementation? → Is the previous implementation COMPLETE?
 
 If ANY answer is "no" or "I'm not sure" → STOP and ask user.
 ```
@@ -430,7 +401,7 @@ ERROR: Write(.task/step-1-result.json) failed
 
 ✅ CORRECT RESPONSE:
 "Write failed for step-1-result.json. Error: [details].
-I cannot proceed without this file because the review needs it.
+I cannot proceed without this file because the final review needs it.
 How should I proceed?"
 ```
 
@@ -444,7 +415,7 @@ How should I proceed?"
 - Do NOT say "Soll ich..." or "Shall I..." — keep moving
 - Do NOT stop between phases except Phase 4
 - **Do NOT skip, defer, or bypass ANY Codex review phase**
-- **Do NOT start multiple implementations in parallel** — this bypasses review gates
+- **Do NOT start multiple implementations in parallel** — implementations must be sequential
 - **Do NOT rationalize skipping steps** — "time", "efficiency", "constraints" are not valid reasons
 - **Do NOT assume reviews will pass** — wait for actual Codex approval
 - **Do NOT substitute your judgment for Codex** — you are not the reviewer
@@ -453,12 +424,11 @@ How should I proceed?"
 - ALWAYS run `orchestrator.sh init` as the very first tool call
 - ALWAYS use `TaskCreate` to create tasks and use the returned IDs
 - ALWAYS wrap agent input in XML tags
-<<<<<<< HEAD
 - ALWAYS write JSON files to `${TASK_DIR}/` with pretty-printed formatting (2-space indentation) so they are human-readable
 - Max 3 review iterations, max 2 UI fix iterations
 - ALWAYS track loop iteration count — STOP at 25 iterations
-- **ALWAYS wait for Codex review to complete AND return `approved`** before next implementation
-- **ALWAYS respect `blockedBy` dependencies** — they ARE the review gates
+- **ALWAYS wait for each implementation to complete** before starting the next one
+- **ALWAYS respect `blockedBy` dependencies** — they enforce sequential execution
 - **ALWAYS stop and ask user** if any tool call fails
 - **ALWAYS call Codex via MCP** for reviews — you cannot review your own work
 

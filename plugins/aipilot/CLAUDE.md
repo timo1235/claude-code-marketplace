@@ -6,13 +6,14 @@ Multi-agent orchestration pipeline for structured, high-quality implementations.
 
 This plugin orchestrates specialized AI agents through a structured pipeline:
 
-1. **Opus** analyzes the codebase and creates a detailed implementation plan (1-5 steps)
-2. **Codex** reviews the plan for correctness, completeness, and risks
-3. **Opus** revises the plan based on Codex findings
-4. **User** reviews the plan and can request changes (loops back through 2-3-4)
-5. **For each step**: **Opus** implements the step, then **Codex** reviews it (fix loop if needed)
-6. **Codex** does a final review of all changes for overall completeness
-7. **Opus + Playwright** verifies UI changes visually (if applicable)
+1. **User** selects the review model (Codex/Opus/Sonnet) at pipeline start
+2. **Opus** analyzes the codebase and creates a detailed implementation plan (1-5 steps)
+3. **Codex** reviews the plan once for correctness, completeness, and risks
+4. **Opus** revises the plan based on Codex findings (if needed, no re-review)
+5. **User** reviews the plan and can request changes (Opus revises, no Codex re-review)
+6. **Opus** implements all steps sequentially (no per-step reviews)
+7. **Codex** does a single final review of all changes for overall completeness
+8. **Opus + Playwright** verifies UI changes visually (if applicable)
 
 ## Usage
 
@@ -24,12 +25,12 @@ All pipeline artifacts are stored in `.task-{session-id}/` in the project direct
 
 | File | Purpose |
 |------|---------|
+| `pipeline-config.json` | Pipeline mode and review model selection |
 | `pipeline-tasks.json` | Task ID mapping (gating artifact — must exist before Task()) |
 | `plan.md` | Human-readable plan (editable) |
 | `plan.json` | Machine-readable plan |
-| `plan-review.json` | Codex plan review results |
+| `plan-review.json` | Codex plan review results (single review) |
 | `step-N-result.json` | Per-step implementation results |
-| `step-N-review.json` | Per-step code review results |
 | `impl-result.json` | Combined implementation results (all steps) |
 | `code-review.json` | Final code review results (all changes) |
 | `user-plan-feedback.json` | User plan review feedback |
@@ -53,10 +54,11 @@ See `AGENTS.md` for detailed agent specifications.
 - **Task-based enforcement**: Uses `blockedBy` dependencies to enforce execution order
 - **Markdown plan file**: User can directly edit `plan.md` in the session directory before approval
 - **1-5 step plans**: Complexity-based step count keeps plans focused and reviewable
-- **Per-step implementation + review**: Each step is implemented and reviewed individually before moving on
-- **Final review**: After all steps, a comprehensive review verifies overall completeness
+- **Sequential implementation**: Steps are implemented sequentially without per-step reviews
+- **Single final review**: After all steps, one comprehensive Codex review verifies overall completeness
+- **User-selected review model**: User chooses the review model (Codex/Opus/Sonnet) at pipeline start
 - **Codex via MCP**: All reviews use `mcp__codex__codex` tool calls. The orchestrator builds prompts, calls Codex via MCP, parses the JSON response, writes review artifacts, and validates with `validate-review.js`
 - **Playwright for UI**: Visual verification catches issues automated tests miss
-- **User plan verification**: User can request plan changes, triggering Opus revision + Codex re-review before approval
+- **User plan verification**: User can request plan changes, triggering Opus revision (without Codex re-review)
 - **Iteration limits**: Max 3 review loops per gate before escalating to user
 - **Session isolation**: Each pipeline run gets a unique `.task-{session-id}/` directory, enabling parallel execution and preventing state collisions between concurrent pipelines

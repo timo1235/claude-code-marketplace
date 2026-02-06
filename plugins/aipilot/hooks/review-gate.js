@@ -251,63 +251,6 @@ function validateImplResult(taskDir) {
   return null; // Valid
 }
 
-function validateStepReview(taskDir, stepFile) {
-  const reviewPath = path.join(taskDir, stepFile);
-  const review = readJsonSafe(reviewPath);
-  if (!review) {
-    return { decision: 'block', reason: `${stepFile} exists but is not valid JSON.` };
-  }
-
-  if (!['approved', 'needs_changes', 'rejected'].includes(review.status)) {
-    return {
-      decision: 'block',
-      reason: `${stepFile} has invalid status: "${review.status}". Must be "approved", "needs_changes", or "rejected".`
-    };
-  }
-
-  if (typeof review.step_id !== 'number') {
-    return {
-      decision: 'block',
-      reason: `${stepFile} is missing "step_id" number field.`
-    };
-  }
-
-  if (!review.summary || typeof review.summary !== 'string') {
-    return {
-      decision: 'block',
-      reason: `${stepFile} is missing "summary" string field.`
-    };
-  }
-
-  if (!review.step_adherence) {
-    return {
-      decision: 'block',
-      reason: `${stepFile} is missing "step_adherence" section.`
-    };
-  }
-
-  if (!Array.isArray(review.findings)) {
-    return {
-      decision: 'block',
-      reason: `${stepFile} is missing "findings" array.`
-    };
-  }
-
-  return null; // Valid
-}
-
-function findRecentStepReviews(taskDir, now, threshold) {
-  try {
-    const files = fs.readdirSync(taskDir);
-    return files.filter(f => {
-      if (!/^step-\d+-review\.json$/.test(f)) return false;
-      return (now - getModTimeMs(path.join(taskDir, f))) < threshold;
-    });
-  } catch {
-    return [];
-  }
-}
-
 function main() {
   const projectDir = getProjectDir();
   const taskDir = resolveTaskDir(projectDir);
@@ -337,12 +280,6 @@ function main() {
   const codeReviewTime = getModTimeMs(path.join(taskDir, 'code-review.json'));
   if (now - codeReviewTime < recentThreshold) {
     checks.push(validateCodeReview(taskDir));
-  }
-
-  // Validate recently modified step-N-review.json files
-  const recentStepReviews = findRecentStepReviews(taskDir, now, recentThreshold);
-  for (const stepFile of recentStepReviews) {
-    checks.push(validateStepReview(taskDir, stepFile));
   }
 
   const implResultTime = getModTimeMs(path.join(taskDir, 'impl-result.json'));

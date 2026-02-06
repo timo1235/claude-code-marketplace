@@ -1,7 +1,7 @@
 {
   "name": "aipilot",
-  "version": "1.11.0",
-  "description": "AI-Pilot: Multi-agent orchestration pipeline with step-by-step implementation and per-step code review",
+  "version": "1.12.0",
+  "description": "AI-Pilot: Multi-agent orchestration pipeline with sequential implementation and single final review",
   "author": {
     "name": "Timo",
     "url": "https://github.com/timo1235"
