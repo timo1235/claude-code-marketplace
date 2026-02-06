@@ -56,7 +56,7 @@ See `AGENTS.md` for detailed agent specifications.
 - **1-5 step plans**: Complexity-based step count keeps plans focused and reviewable
 - **Sequential implementation**: Steps are implemented sequentially without per-step reviews
 - **Single final review**: After all steps, one comprehensive Codex review verifies overall completeness
-- **User-selected review model**: User chooses the review model (Codex/Opus/Sonnet) at pipeline start
+- **User-selected review model**: User chooses the review model at pipeline start — Codex (gpt-5 via MCP), Opus (Claude Task agent), or Sonnet (Claude Task agent)
 - **Codex via MCP**: All reviews use `mcp__codex__codex` tool calls. The orchestrator builds prompts, calls Codex via MCP, parses the JSON response, writes review artifacts, and validates with `validate-review.js`
 - **Playwright for UI**: Visual verification catches issues automated tests miss
 - **User plan verification**: User can request plan changes, triggering Opus revision (without Codex re-review)

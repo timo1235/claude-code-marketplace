@@ -82,26 +82,26 @@ Use `AskUserQuestion` to let the user choose the review model:
 ```
 AskUserQuestion({
   questions: [{
-    question: "Which model should be used for Codex reviews (plan review + final review)?",
+    question: "Which model should be used for reviews (plan review + final review)?",
     header: "Review Model",
     options: [
-      { label: "Codex (Recommended)", description: "Uses gpt-5 via mcp__codex__codex — fastest, cheapest for reviews" },
-      { label: "Opus", description: "Uses mcp__codex__codex with model override — highest quality, slower" },
-      { label: "Sonnet", description: "Uses mcp__codex__codex with model override — balanced speed/quality" }
+      { label: "Codex (Recommended)", description: "Uses gpt-5 via Codex CLI (mcp__codex__codex) — fastest, cheapest for reviews" },
+      { label: "Opus", description: "Starts a Claude Code Task agent with model opus — highest quality, slower" },
+      { label: "Sonnet", description: "Starts a Claude Code Task agent with model sonnet — balanced speed/quality" }
     ],
     multiSelect: false
   }]
 })
 ```
 
-Map the selection to a model value:
-- "Codex (Recommended)" → `"gpt-5"`
-- "Opus" → `"opus"`
-- "Sonnet" → `"sonnet"`
+Map the selection:
+- "Codex (Recommended)" → `review_model: "codex"` (uses `mcp__codex__codex` with model `"gpt-5"`)
+- "Opus" → `review_model: "opus"` (uses `Task()` with model `"opus"`)
+- "Sonnet" → `review_model: "sonnet"` (uses `Task()` with model `"sonnet"`)
 
 Update `${TASK_DIR}/pipeline-config.json` to include the review model:
 ```json
-{ "mode": "prototype", "review_model": "gpt-5" }
+{ "mode": "prototype", "review_model": "codex" }
 ```
 
 ### Step 2: Create task chain
@@ -171,9 +171,9 @@ Replace `{MODE}` with the value from `pipeline-config.json` (e.g. `prototype` or
 
 Do NOT summarize output. Main Loop picks up Phase 2.
 
-### Phase 2: Codex Plan Review
+### Phase 2: Plan Review
 
-Read `${TASK_DIR}/pipeline-config.json` to get the current mode and `review_model`. Replace `{REVIEW_MODEL}` in all Codex calls with the `review_model` value from the config.
+Read `${TASK_DIR}/pipeline-config.json` to get the current mode and `review_model`.
 
 **Step 2a: Read prompt context**
 
@@ -184,7 +184,7 @@ Read these files:
 - `${TASK_DIR}/plan.md`
 - `${TASK_DIR}/plan.json`
 
-**Step 2b: Call Codex via MCP**
+**Step 2b: Call reviewer**
 
 Assemble a prompt containing:
 - Pipeline mode
@@ -192,16 +192,23 @@ Assemble a prompt containing:
 - Reference to the standards (include content or path)
 - Project CLAUDE.md content (if exists)
 - The full content of plan.md and plan.json
-- Project directory: `${CLAUDE_PROJECT_DIR}` (Codex needs this to know where to explore files)
+- Project directory: `${CLAUDE_PROJECT_DIR}` (reviewer needs this to know where to explore files)
 - Guardrail: "Only explore files within the project directory above. Do not access files outside the project."
 - Instruction: "Return your review as a single JSON object matching the output format specified above. Do not wrap in markdown code fences."
 
-Call:
+**Call based on `review_model`:**
+
+If `review_model` is `"codex"`:
 ```
-mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "{REVIEW_MODEL}" })
+mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "gpt-5" })
 ```
 
-If the tool call fails (MCP server unavailable), report to user: "Codex MCP server not available. Run /pipeline-check for diagnostics."
+If `review_model` is `"opus"` or `"sonnet"`:
+```
+Task({ subagent_type: "general-purpose", model: "{review_model}", prompt: "<assembled prompt>", description: "Plan review" })
+```
+
+If the tool call fails, report to user: "Review model not available. Run /pipeline-check for diagnostics."
 
 **Step 2c: Write review JSON**
 
@@ -285,7 +292,7 @@ This reads all `step-N-result.json` files and writes `${TASK_DIR}/impl-result.js
 
 ### Phase 6: Final Review
 
-Read `${TASK_DIR}/pipeline-config.json` to get the current mode and `review_model`. Replace `{REVIEW_MODEL}` with the `review_model` value from the config.
+Read `${TASK_DIR}/pipeline-config.json` to get the current mode and `review_model`.
 
 **Step 6a: Read prompt context and gather code changes**
 
@@ -301,7 +308,7 @@ Then gather all code changes for the final review:
 - Run `Bash("git diff HEAD~N -- <files>")` where N = number of implementation commits and `<files>` are all files from `impl-result.json`
 - If git diff is empty or unavailable, read the full content of each changed file instead
 
-**Step 6b: Call Codex via MCP**
+**Step 6b: Call reviewer**
 
 Assemble a prompt containing:
 - Pipeline mode
@@ -314,12 +321,19 @@ Assemble a prompt containing:
 - Guardrail: "Only explore files within the project directory above. Do not access files outside the project."
 - Instruction: "Review ALL implementation changes (final review). Return your review as a single JSON object matching the final review output format specified above. Do not wrap in markdown code fences."
 
-Call:
+**Call based on `review_model`:**
+
+If `review_model` is `"codex"`:
 ```
-mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "{REVIEW_MODEL}" })
+mcp__codex__codex({ prompt: "<assembled prompt>", "approval-policy": "on-request", model: "gpt-5" })
 ```
 
-If the tool call fails (MCP server unavailable), report to user: "Codex MCP server not available. Run /pipeline-check for diagnostics."
+If `review_model` is `"opus"` or `"sonnet"`:
+```
+Task({ subagent_type: "general-purpose", model: "{review_model}", prompt: "<assembled prompt>", description: "Final code review" })
+```
+
+If the tool call fails, report to user: "Review model not available. Run /pipeline-check for diagnostics."
 
 **Step 6c: Write review JSON**
 
