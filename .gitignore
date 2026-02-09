@@ -36,6 +36,7 @@ node_modules/
 
 # Pipeline state
 .task/
+.task-*/
 
 # ChunkHound local database
 .chunkhound/
