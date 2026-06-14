@@ -1,0 +1,19 @@
+{
+  "name": "fable-orchestrator",
+  "version": "1.0.0",
+  "description": "Fable as orchestrator: plans, reviews and integrates itself; delegates execution by complexity to cheaper subagents (haiku/sonnet/opus) to save tokens.",
+  "author": {
+    "name": "Timo",
+    "url": "https://github.com/timo1235"
+  },
+  "license": "MIT",
+  "keywords": [
+    "orchestration",
+    "delegation",
+    "fable",
+    "subagents",
+    "cost-optimization",
+    "multi-model"
+  ],
+  "skills": "./skills/"
+}

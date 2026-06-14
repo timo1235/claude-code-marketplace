@@ -12,19 +12,9 @@
   },
   "plugins": [
     {
-      "name": "aipilot",
-      "source": "./plugins/aipilot",
+      "name": "fable-orchestrator",
+      "source": "./plugins/fable-orchestrator",
       "category": "productivity"
-    },
-    {
-      "name": "second-opinion",
-      "source": "./plugins/second-opinion",
-      "category": "productivity"
-    },
-    {
-      "name": "chunkhound-integration",
-      "source": "./plugins/chunkhound-integration",
-      "category": "code-intelligence"
     }
   ]
 }
