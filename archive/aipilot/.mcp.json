@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "codex": {
+      "command": "codex",
+      "args": [
+        "-m",
+        "gpt-5",
+        "-c",
+        "model_reasoning_effort=high",
+        "-c",
+        "sandbox_permissions=[\"disk-full-read-access\"]",
+        "mcp-server"
+      ],
+      "env": {}
+    }
+  }
+}

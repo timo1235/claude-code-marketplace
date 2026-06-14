@@ -1,0 +1,53 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source", "status", "problem_summary", "analysis", "suggestions", "root_cause_hypothesis", "remaining_concerns"],
+  "properties": {
+    "source": {
+      "type": "string",
+      "enum": ["codex", "opus"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["resolved", "partially_resolved", "requires_user_input"]
+    },
+    "problem_summary": {
+      "type": "string"
+    },
+    "analysis": {
+      "type": "string"
+    },
+    "suggestions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["approach", "reasoning", "confidence", "verification_steps"],
+        "properties": {
+          "approach": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "verification_steps": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "root_cause_hypothesis": {
+      "type": "string"
+    },
+    "remaining_concerns": {
+      "type": ["string", "null"]
+    }
+  }
+}
