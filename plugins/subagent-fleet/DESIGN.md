@@ -1,99 +1,101 @@
 # subagent-fleet — Design & Plan
 
-> Status: Überarbeiteter Entwurf. Beschreibt **was** gebaut wird und **warum**. Implementierung folgt.
+> Status: implemented. Describes **what** was built and **why**.
 
-## Problem / Idee
+## Problem / Idea
 
-Ein Frontier-Model (Fable 5, Opus, GPT-5, …) ist als **Orchestrator + Reviewer** stark,
-aber teuer. Mechanische und klar umrissene Ausführung (Coding zu Spec, Recherche,
-Massen-Edits) muss nicht auf dem teuersten Model laufen. Ziel:
+A frontier model (Fable 5, Opus, GPT-5, …) is strong as an **orchestrator + reviewer**,
+but expensive. Mechanical and clearly-scoped execution (coding to spec, research,
+mass edits) does not need to run on the most expensive model. Goal:
 
-> Der Orchestrator plant, zerlegt, **delegiert Ausführung an günstigere Fremdprovider-Worker
-> (GLM/z.ai, DeepSeek, OpenRouter, …)** und **reviewt** deren Ergebnis. Welche Provider und
-> Modelle die Worker nutzen, ist reine **Konfiguration** — Credentials hinterlegen, Modelle
-> definieren, fertig.
+> The orchestrator plans, decomposes, **delegates execution to cheaper third-party
+> workers (GLM/z.ai, DeepSeek, OpenRouter, …)** and **reviews** their results. Which
+> providers and models the workers use is pure **configuration** — drop in credentials,
+> define models, done.
 
-Nicht an eine `.zshrc` gebunden, nicht an Fable gebunden, nicht an Anthropic-Abo gebunden.
-Andere Nutzer sollen es installieren, Keys eintragen und loslegen können.
+Not tied to any one `.zshrc`, not tied to Fable, not tied to an Anthropic subscription.
+Other users should be able to install it, enter their keys, and go.
 
-## Kern-Constraint (warum ein Dispatch-Script nötig ist)
+## Core constraint (why a dispatch script is needed)
 
-Das eingebaute **Task-Tool erbt `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` vom
-Elternprozess**. Eine laufende Session hat **genau ein Backend**; der einzige
-Per-Subagent-Knopf ist der *Modellname*, den dieses eine Backend bedient. Damit lässt sich
-**kein** Subagent auf z.ai schicken, während der Orchestrator auf Anthropic läuft.
+The built-in **Task tool inherits `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` from the
+parent process**. A running session has **exactly one backend**; the only per-subagent
+knob is the *model name* served by that one backend. So there is **no** way to send a
+subagent to z.ai while the orchestrator runs on Anthropic.
 
-→ Mechanismus: Der Orchestrator ruft pro delegierter Aufgabe via **Bash** ein separates
-**`claude -p` (headless)** auf, mit provider-spezifischen Env-Variablen. Jeder Worker ist
-eine eigene Claude-Code-Instanz, gegen den Fremdprovider authentifiziert; die Anthropic-Auth
-wird im Worker-Prozess entfernt. Ergebnis (inkl. Token-Usage und `session_id`) kommt als
-JSON zurück, der Orchestrator reviewt. (Gleiches Grundprinzip wie `ethanhq/cc-fleet`.)
+→ Mechanism: For each delegated task the orchestrator invokes a separate
+**`claude -p` (headless)** via **Bash**, with provider-specific env variables. Each worker
+is its own Claude Code instance, authenticated against the third-party provider; the
+Anthropic auth is removed from the worker process. The result (including token usage and
+`session_id`) comes back as JSON and the orchestrator reviews it. (Same basic principle
+as `ethanhq/cc-fleet`.)
 
-Verifiziert: `claude -p "…" --output-format json --model … --allowedTools … --permission-mode
-… --append-system-prompt …` existiert und liefert `{ result, session_id, total_cost_usd,
-usage, num_turns, … }`. Ebenfalls verifiziert vorhanden: `--resume <session-id>`,
+Verified: `claude -p "…" --output-format json --model … --allowedTools … --permission-mode
+… --append-system-prompt …` exists and returns `{ result, session_id, total_cost_usd,
+usage, num_turns, … }`. Also verified present: `--resume <session-id>`,
 `--setting-sources`, `--strict-mcp-config`.
 
-## Worker-Isolation (wichtig)
+## Worker isolation (important)
 
-Ein gespawnter `claude -p` lädt standardmäßig die **komplette User-/Projekt-Konfiguration**:
-`~/.claude/settings.json`, Projekt-Settings, alle Plugins, Hooks und MCP-Server. Folgen:
-Hooks des Users feuern im Worker, MCP-Server starten pro Worker neu (Latenz), und das
-fleet-Skill würde sich selbst in jeden Worker laden.
+A spawned `claude -p` loads the **entire user/project configuration** by default:
+`~/.claude/settings.json`, project settings, all plugins, hooks and MCP servers.
+Consequences: the user's hooks fire inside the worker, MCP servers restart per worker
+(latency), and the fleet skill would load itself into every worker.
 
-Deshalb startet `fleet.mjs` Worker **standardmäßig isoliert**:
+Therefore `fleet.mjs` starts workers **isolated by default**:
 
-- `--setting-sources ""` (keine User-/Projekt-Settings, keine Plugins/Hooks) — per Config
-  überschreibbar (`settingSources`), falls jemand Projekt-Settings im Worker braucht.
-- `--strict-mcp-config` (keine MCP-Server, außer explizit via Config gewünscht).
-- `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` im Worker-Env (kein Update-Check/Telemetrie).
-- Anthropic-Auth entfernt: `ANTHROPIC_API_KEY`, OAuth-Token u.ä. werden aus dem Env gelöscht,
-  damit kein Abo/kein falscher Key durchschlägt.
+- `--setting-sources ""` (no user/project settings, no plugins/hooks) — overridable via
+  config (`settingSources`) in case someone needs project settings inside a worker.
+- `--strict-mcp-config` (no MCP servers unless explicitly requested via config).
+- `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` in the worker env (no update check /
+  telemetry).
+- Anthropic auth removed: `ANTHROPIC_API_KEY`, OAuth tokens etc. are deleted from the env
+  so no subscription and no wrong key leaks through. Bedrock/Vertex routing toggles are
+  stripped as well.
 
-## Provider-Kompatibilität
+## Provider compatibility
 
-Der Env-Weg funktioniert nur mit **Anthropic-Messages-kompatiblen** Endpoints:
+The env-var approach only works with **Anthropic-Messages-compatible** endpoints:
 
-| Provider   | Base URL                          | Kompatibel |
+| Provider   | Base URL                          | Compatible |
 |------------|-----------------------------------|------------|
 | DeepSeek   | `https://api.deepseek.com/anthropic` | ✓ |
 | z.ai / GLM | `https://api.z.ai/api/anthropic`     | ✓ |
-| OpenRouter | `https://openrouter.ai/api`          | ✓ („Anthropic Skin", inkl. Tool-Use/Thinking) |
+| OpenRouter | `https://openrouter.ai/api`          | ✓ ("Anthropic skin", incl. tool-use/thinking) |
 
-Base-URLs werden nicht blind der Doku geglaubt: **`fleet.mjs doctor --ping`** macht pro
-Provider einen minimalen Ein-Turn-Call und verifiziert die ganze Kette (URL, Auth,
-Modellname) für Centbeträge.
+Base URLs are not taken on faith from docs: **`fleet.mjs doctor --ping`** makes a minimal
+one-turn call per provider and verifies the whole chain (URL, auth, model name) for cents.
 
-Claude Code macht intern zusätzliche Calls mit einem Haiku-Klasse-Modell (Zusammenfassungen
-u.ä.). Auf einem Fremd-Backend schlägt das mit dem Default-Claude-Modellnamen fehl — deshalb
-hat jeder Provider ein **`smallFastModel`**, das als `ANTHROPIC_SMALL_FAST_MODEL` (bzw.
-`ANTHROPIC_DEFAULT_HAIKU_MODEL`) ins Worker-Env gesetzt wird.
+Claude Code makes additional internal calls with a Haiku-class model (summaries etc.).
+On a third-party backend those fail with the default Claude model name — so each provider
+has a **`smallFastModel`** that is set as `ANTHROPIC_SMALL_FAST_MODEL` (and
+`ANTHROPIC_DEFAULT_HAIKU_MODEL`) in the worker env.
 
-Reine OpenAI-Format-Provider brauchen einen Shim (claude-code-router / LiteLLM) — bewusst
-nicht Teil von v1.
+Pure OpenAI-format providers need a shim (claude-code-router / LiteLLM) — deliberately
+not part of v1.
 
-## Komponenten
+## Components
 
 ```
 plugins/subagent-fleet/
   .claude-plugin/plugin.json
-  scripts/fleet.mjs              # Dispatch-CLI (Node, keine Dependencies)
-  fleet.config.example.json      # Vorlage: Provider + Rollen (ohne Secrets)
-  skills/fleet/SKILL.md          # Orchestrierungs-Policy (provider-agnostisch)
+  scripts/fleet.mjs              # dispatch CLI (Node, no dependencies)
+  fleet.config.example.json      # template: providers + roles (no secrets)
+  skills/fleet/SKILL.md          # orchestration policy (provider-agnostic)
   README.md
-  DESIGN.md                      # dieses Dokument
+  DESIGN.md                      # this document
 ```
 
-### 1. Konfiguration (`fleet.config.json`)
+### 1. Configuration (`fleet.config.json`)
 
-Secrets stehen **nie** in der Config — nur der **Name** der Env-Variable. Suchreihenfolge:
-`$FLEET_CONFIG` → `$CLAUDE_PROJECT_DIR/.claude/fleet.config.json` →
+Secrets are **never** stored in the config — only the **name** of the env variable.
+Search order: `$FLEET_CONFIG` → `$CLAUDE_PROJECT_DIR/.claude/fleet.config.json` →
 `./.claude/fleet.config.json` → `$CLAUDE_CONFIG_DIR/fleet.config.json` →
 `~/.claude/fleet.config.json`.
 
 ```jsonc
 {
-  // optional: dotenv-Datei, aus der Keys geladen werden (generisch, kein fester Pfad)
+  // optional: dotenv file to load keys from (generic, no fixed path)
   "envFile": "~/.config/fleet/.env",
   "providers": {
     "deepseek": {
@@ -101,7 +103,7 @@ Secrets stehen **nie** in der Config — nur der **Name** der Env-Variable. Such
       "apiKeyEnv": "DEEPSEEK_API_KEY",
       "smallFastModel": "deepseek-v4-flash",
       "models": { "strong": "deepseek-v4-pro", "default": "deepseek-v4-flash", "fast": "deepseek-v4-flash" },
-      // optional: Preise pro 1M Token → fleet.mjs rechnet Kosten selbst (USD)
+      // optional: prices per 1M tokens → fleet.mjs computes cost itself (USD)
       "pricing": { "deepseek-v4-pro": { "input": 0.6, "output": 2.4 } }
     },
     "zai": {
@@ -126,85 +128,92 @@ Secrets stehen **nie** in der Config — nur der **Name** der Env-Variable. Such
 }
 ```
 
-Hinweis Modellnamen: Werte sind Beispiele; die realen Namen prüft `doctor --ping`.
-(Kein `[1m]`-Suffix — das ist eine Anthropic-/Claude-Code-Konvention, kein Fremdprovider-Name.)
+Note on model names: values are examples; `doctor --ping` verifies the real names.
+(No `[1m]` suffix — that is an Anthropic/Claude Code convention, not a third-party
+model name.)
 
-### 2. Dispatch-CLI (`scripts/fleet.mjs`)
+### 2. Dispatch CLI (`scripts/fleet.mjs`)
 
-Node, ohne externe Dependencies. Kommandos:
+Node, no external dependencies. Commands:
 
-- `fleet.mjs doctor [--ping]` — listet Provider + Key-Status; mit `--ping` ein minimaler
-  Live-Call pro Provider (verifiziert URL/Auth/Modellname).
-- `fleet.mjs list` — zeigt konfigurierte Rollen/Provider/Modelle.
+- `fleet.mjs doctor [--ping]` — lists providers + key status; with `--ping` a minimal
+  live call per provider (verifies URL/auth/model name).
+- `fleet.mjs list` — shows configured roles/providers/models.
 - `fleet.mjs run --role <role> --task "<text>" [--cwd <dir>] [--format json|text]`
-  - Alt.: `--provider <id> --model <tier|literal>`; `--task-file <path>` oder stdin.
-  - baut Worker-Env: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
+  - Alt.: `--provider <id> --model <tier|literal>`; `--task-file <path>` or stdin.
+  - builds the worker env: `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
     `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
-    **entfernt** `ANTHROPIC_API_KEY`/OAuth-Token. Das Modell kommt über `--model` (nicht
-    zusätzlich per Env — Redundanz vermeiden).
-  - exec `claude -p <task> --output-format json --model … --allowedTools …
+    **removes** `ANTHROPIC_API_KEY`/OAuth tokens. The model is passed via `--model`
+    (not additionally via env — avoid redundancy).
+  - execs `claude -p <task> --output-format json --model … --allowedTools …
     --permission-mode … --max-turns … --setting-sources "" --strict-mcp-config
-    --append-system-prompt <worker-preamble>` im gewählten `cwd`;
-  - **Hard-Timeout** (`timeoutSec`, Default 30 min): Worker wird gekillt, Fehler-JSON zurück.
-  - Output an den Orchestrator: `result`, `session_id`, `usage` (Token), berechnete Kosten
-    (aus `pricing`, falls konfiguriert — `total_cost_usd` der CLI ist für Fremdmodelle
-    unzuverlässig, da mit Anthropic-Preisen gerechnet), Exit-Code != 0 bei Fehler.
-- `fleet.mjs run --resume <session-id> --task "<follow-up>"` — **Review-Loop**: setzt die
-  Worker-Session mit vollem Kontext fort (gleiches Env-Setup wie beim Erst-Dispatch).
-  Fällt ein Review durch, kostet die Korrektur so nur das Delta statt eines neuen Workers.
+    --append-system-prompt <worker-preamble>` in the chosen `cwd`;
+  - **hard timeout** (`timeoutSec`, default 30 min): worker is killed (whole process
+    group), error JSON returned.
+  - Output for the orchestrator: `result`, `session_id`, `usage` (tokens), computed cost
+    (from `pricing` if configured — the CLI's own `total_cost_usd` is unreliable for
+    third-party models since it is computed with Anthropic prices), exit code != 0 on
+    error.
+- `fleet.mjs run --resume <session-id> --task "<follow-up>"` — **review loop**: continues
+  the worker session with full context (same env setup as the initial dispatch).
+  If a review fails, the fix costs only the delta instead of a fresh worker.
 
-**Worker-Preamble** (append-system-prompt): „Du bist ein delegierter Worker. Tu genau die
-Aufgabe, keine Scope-Erweiterung. Du kannst nicht rückfragen — bei echter Entscheidung: nennen
-und stoppen. Antworte knapp: was getan, was geändert (Dateien), was verifiziert, was offen.
-Deine Edits werden vom Orchestrator reviewt."
+**Worker preamble** (append-system-prompt): "You are a delegated worker. Do exactly the
+assigned task, no scope expansion. You cannot ask questions — if a real decision is
+needed, state it and stop. Answer concisely: what was done, which files changed, what was
+verified, what remains open. Your edits will be reviewed by the orchestrator."
 
 ### 3. Skill (`skills/fleet/SKILL.md`)
 
-Provider-agnostische Orchestrierungs-Policy. Trigger: „fleet", „delegate", „subagent",
-„glm/deepseek/openrouter", „günstigeres Model". Inhalt:
+Provider-agnostic orchestration policy. Triggers: "fleet", "delegate", "subagent",
+"glm/deepseek/openrouter", "cheaper model". Content:
 
-- Rolle des Orchestrators: verstehen, planen, **zerlegen**, delegieren, **reviewen**, integrieren.
-- Delegieren = `node $CLAUDE_PLUGIN_ROOT/scripts/fleet.mjs run --role … --task "…" --cwd .`.
-- **Nicht-triviale Dispatches via `run_in_background`** starten (das Bash-Tool des
-  Orchestrators hat max. 10 min Timeout; Worker dürfen länger laufen).
-- Vollständige, self-contained Assignments (Worker kann nicht rückfragen).
-- **Review ist Pflicht**: Code → `git diff`, Recherche → Output prüfen. Der Orchestrator
-  besitzt das Endergebnis. Fällt ein Review durch → `--resume <session-id>` mit präzisem
-  Fix-Auftrag statt neuem Worker.
-- **Parallelität**: parallele Worker nur auf **disjunkten Dateien**; sonst sequenziell oder
-  per Git-Worktree (`--cwd` auf ein Worktree zeigen).
-- Websuche macht der Orchestrator (WebSearch ist ein serverseitiges Anthropic-Tool, auf
-  Fremd-Backends nicht verfügbar); Worker bekommen konkrete URLs für `WebFetch`.
-- Kostenbewusstsein: JSON-Output enthält Token-Usage + ggf. berechnete Kosten.
-- Wann **nicht** delegieren: Triviales, enge Iteration mit User, reine Entscheidungen.
+- The orchestrator's role: understand, plan, **decompose**, delegate, **review**, integrate.
+- Delegate = `node $CLAUDE_PLUGIN_ROOT/scripts/fleet.mjs run --role … --task "…" --cwd .`.
+- **Start non-trivial dispatches via `run_in_background`** (the orchestrator's Bash tool
+  has a 10-minute timeout; workers may run longer).
+- Complete, self-contained assignments (a worker cannot ask questions).
+- **Review is mandatory**: code → `git diff`, research → check the output. The
+  orchestrator owns the final result. If a review fails → `--resume <session-id>` with a
+  precise fix assignment instead of a fresh worker.
+- **Parallelism**: parallel workers only on **disjoint files**; otherwise sequential or
+  per git worktree (point `--cwd` at a worktree).
+- Web search stays with the orchestrator (WebSearch is a server-side Anthropic tool, not
+  available on third-party backends); workers get concrete URLs for `WebFetch`.
+- Cost awareness: the JSON output contains token usage + computed cost if configured.
+- When **not** to delegate: trivial things, tight iteration with the user, pure decisions.
 
-## Sicherheit
+## Security
 
-- Keine Secrets im Repo/Config — nur Env-Var-Namen; Keys aus Env oder optionaler `envFile`.
-- `ANTHROPIC_BASE_URL` niemals global setzen — nur inline im Worker-Subprozess.
-- Worker laufen in definiertem `cwd`; Edits sind über `git diff` reviewbar.
-- **`--allowedTools` ist eine Permission-Allowlist**: Was dort steht, läuft ohne Nachfrage.
-  Eine Rolle mit `Bash` hat damit faktisch **vollen Shell-Zugriff** im `cwd`, unabhängig vom
-  `permissionMode`. Konsequenz: `Bash` nur Rollen geben, die es brauchen (im Beispiel hat
-  `grunt` bewusst kein Bash); README weist explizit darauf hin.
-- `permissionMode` konfigurierbar; `bypassPermissions` nur bewusst als Opt-in.
+- No secrets in the repo/config — only env-var names; keys come from the env or the
+  optional `envFile`.
+- Never set `ANTHROPIC_BASE_URL` globally — only inline in the worker subprocess.
+- Workers run in a defined `cwd`; edits are reviewable via `git diff`.
+- **`--allowedTools` is a permission allowlist**: whatever is listed runs without
+  prompting. A role with `Bash` effectively has **full shell access** in its `cwd`,
+  regardless of `permissionMode`. Consequence: give `Bash` only to roles that need it
+  (in the example, `grunt` deliberately has none); the README points this out explicitly.
+- `permissionMode` is configurable; `bypassPermissions` only as a deliberate opt-in.
 
 ## Test / Definition of Done
 
-1. `fleet.mjs doctor` zeigt die Provider + Key-Status; `doctor --ping` verifiziert mindestens
-   einen Provider live.
-2. Echter Dispatch mit **günstigstem Modell**: trivialer Coding-Task in einem
-   Temp-Verzeichnis, Worker legt Datei an → JSON mit `result`, `session_id`, Usage;
-   Datei existiert. Beweis, dass es real funktioniert.
-3. **Resume-Test**: Follow-up via `--resume` auf dieselbe Worker-Session, Worker hat den
-   Kontext des Erst-Auftrags.
-4. Nachweis, dass die Orchestrator-Session (Anthropic) unberührt bleibt (kein Anthropic-Auth
-   im Worker-Env; Worker-Task gibt relevante `ANTHROPIC_*`-Var-Namen aus, keine Werte).
-5. Timeout-Test: `timeoutSec` klein setzen → Worker wird gekillt, sauberes Fehler-JSON.
+1. `fleet.mjs doctor` shows the providers + key status; `doctor --ping` verifies at least
+   one provider live.
+2. Real dispatch with the **cheapest model**: trivial coding task in a temp directory,
+   worker creates a file → JSON with `result`, `session_id`, usage; file exists. Proof
+   that it really works.
+3. **Resume test**: follow-up via `--resume` on the same worker session; the worker has
+   the context of the initial assignment.
+4. Proof that the orchestrator session (Anthropic) remains untouched (no Anthropic auth
+   in the worker env; a worker task prints the relevant `ANTHROPIC_*` var names, never
+   values).
+5. Timeout test: set `timeoutSec` low → worker is killed, clean error JSON.
 
-## Bezug zum alten `fable-orchestrator`
+All five verified against live DeepSeek/z.ai endpoints on 2026-07-01.
 
-Das bisherige Plugin delegierte nur **innerhalb Anthropic** (haiku/sonnet/opus, Abo-nativ) und
-war Fable-gebrandet. `subagent-fleet` verallgemeinert: beliebiger Orchestrator, Fremdprovider
-per Config. Der alte Plugin-Ordner wandert ins `archive/`; `marketplace.json` wird
-entsprechend aktualisiert.
+## Relation to the old `fable-orchestrator`
+
+The previous plugin delegated only **within Anthropic** (haiku/sonnet/opus,
+subscription-native) and was Fable-branded. `subagent-fleet` generalizes: any
+orchestrator, third-party providers via config. The old plugin folder moved to
+`archive/`; `marketplace.json` was updated accordingly.

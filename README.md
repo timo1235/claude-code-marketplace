@@ -4,40 +4,40 @@ A collection of plugins for [Claude Code](https://docs.anthropic.com/en/docs/cla
 
 ## Installation
 
-Innerhalb einer Claude Code Session:
+Inside a Claude Code session:
 
 ```
 /plugin marketplace add timo1235/claude-code-marketplace
 ```
 
-Oder im Terminal:
+Or from the terminal:
 
 ```bash
 claude plugin marketplace add timo1235/claude-code-marketplace
 ```
 
-Danach Plugins durchsuchen und installieren mit `/plugin`.
+Then browse and install plugins with `/plugin`.
 
-## Verfuegbare Plugins
+## Available Plugins
 
-| Plugin | Kategorie | Beschreibung | Details |
-|--------|-----------|-------------|---------|
-| [subagent-fleet](plugins/subagent-fleet) | Productivity | Orchestrator auf dem Frontier-Model, Ausfuehrung auf guenstigen Fremdprovider-Workern (z.ai/GLM, DeepSeek, OpenRouter): delegiert Tasks per Config an headless `claude -p`-Worker und reviewt deren Ergebnis. | [README](plugins/subagent-fleet/README.md) |
+| Plugin | Category | Description | Details |
+|--------|----------|-------------|---------|
+| [subagent-fleet](plugins/subagent-fleet) | Productivity | Orchestrator on the frontier model, execution on cheap third-party workers (z.ai/GLM, DeepSeek, OpenRouter): delegates tasks to headless `claude -p` workers via config and reviews their results. | [README](plugins/subagent-fleet/README.md) |
 
-## Plugin-Struktur
+## Plugin Structure
 
 ```
 .claude-plugin/
-  marketplace.json          # Marketplace-Registry
+  marketplace.json          # marketplace registry
 plugins/
   <plugin-name>/
     .claude-plugin/
-      plugin.json           # Plugin-Manifest
-    skills/                 # Skills (optional)
-    agents/                 # Agenten (optional)
-    hooks/                  # Hooks (optional)
+      plugin.json           # plugin manifest
+    skills/                 # skills (optional)
+    agents/                 # agents (optional)
+    hooks/                  # hooks (optional)
 ```
 
-## Lizenz
+## License
 
 MIT
