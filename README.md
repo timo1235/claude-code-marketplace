@@ -22,7 +22,7 @@ Danach Plugins durchsuchen und installieren mit `/plugin`.
 
 | Plugin | Kategorie | Beschreibung | Details |
 |--------|-----------|-------------|---------|
-| [fable-orchestrator](plugins/fable-orchestrator) | Productivity | Fable als Orchestrator: plant, reviewt und integriert selbst, delegiert die Ausfuehrung nach Komplexitaet an guenstigere Subagents (grunt-worker/haiku, task-implementer/sonnet, heavy-lift/opus), um Token zu sparen. | [README](plugins/fable-orchestrator/README.md) |
+| [subagent-fleet](plugins/subagent-fleet) | Productivity | Orchestrator auf dem Frontier-Model, Ausfuehrung auf guenstigen Fremdprovider-Workern (z.ai/GLM, DeepSeek, OpenRouter): delegiert Tasks per Config an headless `claude -p`-Worker und reviewt deren Ergebnis. | [README](plugins/subagent-fleet/README.md) |
 
 ## Plugin-Struktur
 

@@ -1,0 +1,30 @@
+{
+  "envFile": "~/.config/fleet/.env",
+  "providers": {
+    "deepseek": {
+      "baseUrl": "https://api.deepseek.com/anthropic",
+      "apiKeyEnv": "DEEPSEEK_API_KEY",
+      "smallFastModel": "deepseek-v4-flash",
+      "models": { "strong": "deepseek-v4-pro", "default": "deepseek-v4-flash", "fast": "deepseek-v4-flash" },
+      "pricing": { "deepseek-v4-pro": { "input": 0.6, "output": 2.4 } }
+    },
+    "zai": {
+      "baseUrl": "https://api.z.ai/api/anthropic",
+      "apiKeyEnv": "ZAI_API_KEY",
+      "smallFastModel": "glm-5.2-air",
+      "models": { "strong": "glm-5.2", "default": "glm-5.2", "fast": "glm-5.2-air" }
+    },
+    "openrouter": {
+      "baseUrl": "https://openrouter.ai/api",
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "smallFastModel": "z-ai/glm-4.6",
+      "models": { "strong": "deepseek/deepseek-v4", "default": "z-ai/glm-4.6", "fast": "z-ai/glm-4.6" }
+    }
+  },
+  "roles": {
+    "coder":      { "provider": "zai",      "model": "strong", "tools": "Read,Edit,Write,Grep,Glob,Bash" },
+    "researcher": { "provider": "deepseek", "model": "fast",   "tools": "Read,Grep,Glob,WebFetch" },
+    "grunt":      { "provider": "deepseek", "model": "fast",   "tools": "Read,Edit,Write,Grep,Glob" }
+  },
+  "defaults": { "permissionMode": "acceptEdits", "maxTurns": 40, "timeoutSec": 1800 }
+}

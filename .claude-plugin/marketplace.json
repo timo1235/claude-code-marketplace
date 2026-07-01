@@ -12,8 +12,8 @@
   },
   "plugins": [
     {
-      "name": "fable-orchestrator",
-      "source": "./plugins/fable-orchestrator",
+      "name": "subagent-fleet",
+      "source": "./plugins/subagent-fleet",
       "category": "productivity"
     }
   ]

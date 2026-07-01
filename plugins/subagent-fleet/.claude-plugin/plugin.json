@@ -1,0 +1,21 @@
+{
+  "name": "subagent-fleet",
+  "version": "1.0.0",
+  "description": "Orchestrator on a frontier model, execution on cheap third-party workers: delegates tasks to configurable Anthropic-compatible providers (z.ai/GLM, DeepSeek, OpenRouter) via headless claude -p workers and reviews their results.",
+  "author": {
+    "name": "Timo",
+    "url": "https://github.com/timo1235"
+  },
+  "license": "MIT",
+  "keywords": [
+    "orchestration",
+    "delegation",
+    "subagents",
+    "multi-provider",
+    "cost-optimization",
+    "deepseek",
+    "glm",
+    "openrouter"
+  ],
+  "skills": "./skills/"
+}
