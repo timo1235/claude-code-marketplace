@@ -11,8 +11,8 @@
     "zai": {
       "baseUrl": "https://api.z.ai/api/anthropic",
       "apiKeyEnv": "ZAI_API_KEY",
-      "smallFastModel": "glm-5.2-air",
-      "models": { "strong": "glm-5.2", "default": "glm-5.2", "fast": "glm-5.2-air" }
+      "smallFastModel": "glm-4.5-flash",
+      "models": { "strong": "glm-5.2", "default": "glm-5.2", "fast": "glm-4.5-air" }
     },
     "openrouter": {
       "baseUrl": "https://openrouter.ai/api",
