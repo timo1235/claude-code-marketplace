@@ -6,13 +6,21 @@
       "apiKeyEnv": "DEEPSEEK_API_KEY",
       "smallFastModel": "deepseek-v4-flash",
       "models": { "strong": "deepseek-v4-pro", "default": "deepseek-v4-flash", "fast": "deepseek-v4-flash" },
-      "pricing": { "deepseek-v4-pro": { "input": 0.6, "output": 2.4 } }
+      "pricing": {
+        "deepseek-v4-pro":   { "input": 1.74, "output": 3.48 },
+        "deepseek-v4-flash": { "input": 0.14, "output": 0.28 }
+      }
     },
     "zai": {
       "baseUrl": "https://api.z.ai/api/anthropic",
       "apiKeyEnv": "ZAI_API_KEY",
       "smallFastModel": "glm-4.5-flash",
-      "models": { "strong": "glm-5.2", "default": "glm-5.2", "fast": "glm-4.5-air" }
+      "models": { "strong": "glm-5.2", "default": "glm-5.2", "fast": "glm-4.5-air" },
+      "pricing": {
+        "glm-5.2":       { "input": 1.4, "output": 4.4 },
+        "glm-4.5-air":   { "input": 0.2, "output": 1.1 },
+        "glm-4.5-flash": { "input": 0, "output": 0 }
+      }
     },
     "openrouter": {
       "baseUrl": "https://openrouter.ai/api",

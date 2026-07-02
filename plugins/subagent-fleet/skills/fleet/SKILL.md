@@ -1,6 +1,6 @@
 ---
 name: fleet
-description: Orchestration policy for delegating execution to cheaper third-party subagents (GLM/z.ai, DeepSeek, OpenRouter, ...). You plan, decompose, review and integrate yourself, and dispatch mechanical/clearly-scoped execution to configured workers via fleet.mjs to save cost. Use at the start of a multi-step implementation or research task, or when the user says "fleet", "delegate", "subagent", "glm", "deepseek", "openrouter", or "use a cheaper model".
+description: Orchestration policy for offloading large, mechanical, clearly-specifiable execution batches (migrations, boilerplate, mass edits, research fan-outs) to cheaper third-party workers (GLM/z.ai, DeepSeek, OpenRouter, ...) via fleet.mjs. You plan, decompose, review and integrate yourself. Use when a task contains a sizable mechanical chunk that a cheap model can execute from a written spec — NOT for small edits, decision-heavy work, or tight iteration with the user. Also use when the user says "fleet", "glm", "deepseek", "openrouter", or "use a cheaper model".
 plugin-scoped: true
 allowed-tools: Read, Bash, Grep, Glob, TodoWrite
 ---
@@ -112,8 +112,15 @@ see what the fleet is spending.
 
 ## When NOT to delegate
 
-- Trivial 1–2 line changes / one glance at a file — dispatch overhead costs more than it saves.
-  Do it yourself.
+Delegation pays off only when the execution you hand off is clearly larger than the spec you
+have to write for it — the win comes from price arbitrage plus the worker's small, clean
+context, and it scales with batch size. Do it yourself when:
+
+- The expected change is small — rule of thumb: under ~3 files or ~100 changed lines. Writing a
+  self-contained spec then costs about as much as doing the task.
+- The cheap model is unlikely to land it within one or two review cycles (fuzzy requirements,
+  subtle codebase conventions, tricky debugging). Review-fix churn burns your expensive review
+  tokens faster than the arbitrage saves.
 - Tight, iterative back-and-forth with the user — delegation breaks the thread.
 - Tasks whose core is a **decision** (architecture, trade-off, prioritization) — that's your
   job, not delegable.

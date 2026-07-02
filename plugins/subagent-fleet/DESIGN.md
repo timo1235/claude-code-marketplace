@@ -181,7 +181,9 @@ Provider-agnostic orchestration policy. Triggers: "fleet", "delegate", "subagent
 - Web search stays with the orchestrator (WebSearch is a server-side Anthropic tool, not
   available on third-party backends); workers get concrete URLs for `WebFetch`.
 - Cost awareness: the JSON output contains token usage + computed cost if configured.
-- When **not** to delegate: trivial things, tight iteration with the user, pure decisions.
+- When **not** to delegate: changes below break-even (roughly <3 files / <100 lines — the
+  spec costs as much as the task), work the cheap model won't land in 1–2 review cycles,
+  tight iteration with the user, pure decisions.
 
 ## Security
 

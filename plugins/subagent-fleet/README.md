@@ -58,8 +58,13 @@ dispatch. (Overridable in config if you actually need project settings inside a 
       "apiKeyEnv": "DEEPSEEK_API_KEY",         // name of the env var, not the key itself
       "smallFastModel": "deepseek-v4-flash",   // model for Claude Code's internal Haiku-class calls
       "models": { "strong": "deepseek-v4-pro", "default": "deepseek-v4-flash", "fast": "deepseek-v4-flash" },
-      // optional: price per 1M tokens in USD → fleet.mjs computes cost itself
-      "pricing": { "deepseek-v4-pro": { "input": 0.6, "output": 2.4 } }
+      // optional: price per 1M tokens in USD → fleet.mjs computes cost itself.
+      // Without it, run output has cost_usd: null — you fly blind on spend.
+      // Skip it only on flat-rate plans, where a per-token number would mislead.
+      "pricing": {
+        "deepseek-v4-pro":   { "input": 1.74, "output": 3.48 },
+        "deepseek-v4-flash": { "input": 0.14, "output": 0.28 }
+      }
     }
     // ... zai, openrouter, ...
   },
@@ -131,6 +136,7 @@ Confirmed-compatible providers:
 | z.ai / GLM | `https://api.z.ai/api/anthropic`     | yes |
 | OpenRouter | `https://openrouter.ai/api`          | yes ("Anthropic skin", incl. tool-use / thinking) |
 
-The model names in `fleet.config.example.json` are **examples**, not guarantees. Run
+The model names and prices in `fleet.config.example.json` are **examples** (prices as of
+July 2026), not guarantees. Run
 `doctor --ping` to verify that your configured URL, auth and model names actually resolve before
 you rely on them.
