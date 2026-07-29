@@ -1,11 +1,12 @@
 # subagent-fleet
 
 Run your **orchestrator** on an expensive frontier model (Fable, Opus, GPT-5, ...) and push the
-actual **execution** down to cheaper, Anthropic-compatible third-party providers — z.ai/GLM,
-DeepSeek, OpenRouter. The orchestrator plans, decomposes, delegates and reviews; the workers do
-the mechanical, clearly-scoped work. Which providers, models and roles the workers use is pure
-**configuration** — drop in credentials, define models, done. Not tied to any one shell config,
-not tied to Fable, not tied to an Anthropic subscription.
+actual **execution** down to cheaper third-party providers — z.ai/GLM, DeepSeek, OpenRouter
+(Anthropic-compatible endpoints), or anything the **opencode CLI** can reach (e.g. the OpenCode
+Go plan with GLM, Qwen, Kimi, DeepSeek). The orchestrator plans, decomposes, delegates and
+reviews; the workers do the mechanical, clearly-scoped work. Which providers, models and roles
+the workers use is pure **configuration** — drop in credentials, define models, done. Not tied
+to any one shell config, not tied to Fable, not tied to an Anthropic subscription.
 
 ## How it works
 
@@ -14,15 +15,26 @@ The built-in Task tool **inherits the parent process's backend** (`ANTHROPIC_BAS
 knob is the *model name* that this one backend serves — so the Task tool **cannot** send a
 subagent to z.ai while the orchestrator stays on Anthropic.
 
-So instead, for each delegated task the orchestrator runs a separate **headless `claude -p`
-process** with provider-specific env vars. Each worker is its own Claude Code instance,
-authenticated against the third-party provider; the Anthropic auth is stripped from the worker's
-env. The result (including token usage and a `session_id` for follow-ups) comes back as JSON,
-and the orchestrator reviews it.
+So instead, for each delegated task the orchestrator runs a separate **headless worker
+process**. Two runners exist, selected per provider via the `runner` field:
 
-Workers run **isolated** by default: no user/project settings, no plugins, no hooks, no MCP
-servers. This keeps your local config out of every worker and avoids re-spawning MCP servers per
-dispatch. (Overridable in config if you actually need project settings inside a worker.)
+- **`claude`** (default) — a headless `claude -p` with provider-specific env vars, pointed at an
+  **Anthropic-Messages-compatible** endpoint. Each worker is its own Claude Code instance,
+  authenticated against the third-party provider; the Anthropic auth is stripped from the
+  worker's env.
+- **`opencode`** — a headless `opencode run`. Auth and the model catalog come from the opencode
+  CLI itself (`opencode auth` / `/connect`), so no baseUrl or API key appears in the fleet
+  config, and **OpenAI-format-only models** (e.g. `glm-5.2` or `kimi-k3` on the OpenCode Go
+  plan) become reachable. Model ids are `catalog/model`, e.g. `opencode-go/glm-5.2` — list them
+  with `opencode models`.
+
+Either way the result (including token usage and a `session_id` for follow-ups) comes back as
+the same JSON shape, and the orchestrator reviews it.
+
+Workers on the claude runner are **isolated** by default: no user/project settings, no plugins,
+no hooks, no MCP servers. This keeps your local config out of every worker and avoids
+re-spawning MCP servers per dispatch. (Overridable in config if you actually need project
+settings inside a worker.) opencode workers run with `--pure` (no external opencode plugins).
 
 ## Setup
 
@@ -65,8 +77,19 @@ dispatch. (Overridable in config if you actually need project settings inside a 
         "deepseek-v4-pro":   { "input": 1.74, "output": 3.48 },
         "deepseek-v4-flash": { "input": 0.14, "output": 0.28 }
       }
-    }
+    },
     // ... zai, openrouter, ...
+
+    // opencode runner: no baseUrl/apiKeyEnv — auth comes from `opencode auth`.
+    // Model ids are catalog/model (see `opencode models`).
+    "opencode": {
+      "runner": "opencode",
+      "models": {
+        "strong": "opencode-go/glm-5.2",
+        "default": "opencode-go/qwen3.7-plus",
+        "fast": "opencode-go/qwen3.6-plus"
+      }
+    }
   },
 
   "roles": {
@@ -81,12 +104,16 @@ dispatch. (Overridable in config if you actually need project settings inside a 
 }
 ```
 
-- **providers** — each has a `baseUrl` (Anthropic-Messages-compatible endpoint), an `apiKeyEnv`
-  (the env-var *name*), a `smallFastModel` (Claude Code makes internal Haiku-class calls; on a
-  third-party backend the default Claude model name fails, so this one is used instead), a
-  `models` map with the `strong` / `default` / `fast` tiers, and optional `pricing` per model.
+- **providers** — on the default claude runner, each has a `baseUrl` (Anthropic-Messages-
+  compatible endpoint), an `apiKeyEnv` (the env-var *name*), a `smallFastModel` (Claude Code
+  makes internal Haiku-class calls; on a third-party backend the default Claude model name
+  fails, so this one is used instead), a `models` map with the `strong` / `default` / `fast`
+  tiers, and optional `pricing` per model. With `"runner": "opencode"` only `models` is
+  required; auth is the opencode CLI's own.
 - **roles** — a named worker profile: which `provider`, which `model` (a tier name or a literal
-  model id), and the `tools` allowlist.
+  model id), and the `tools` allowlist (claude runner only — opencode workers restrict tools
+  via an opencode **agent**, selectable per role with an `agent` field or per run with
+  `--agent`).
 - **defaults** — `permissionMode`, `maxTurns`, and the hard-kill `timeoutSec` (default 30 min).
   Optionally `settingSources` (default `""` = fully isolated worker) if you need user/project
   settings inside workers.
@@ -101,11 +128,13 @@ the plugin is checked out or installed:
 node scripts/fleet.mjs doctor [--ping]                              # providers + key status (+ live ping)
 node scripts/fleet.mjs list                                         # configured roles/providers/models
 node scripts/fleet.mjs run --role coder --task "..." --cwd .        # dispatch a worker
-node scripts/fleet.mjs run --resume <session_id> --task "<fix>"     # follow-up on the same worker session
+node scripts/fleet.mjs run --role coder --resume <session_id> --task "<fix>"   # follow-up, same worker session
 ```
 
-`run` also accepts `--provider <id> --model <tier|literal>` instead of `--role`, and
-`--task-file <path>` (or stdin) instead of `--task`. It returns JSON with `result`,
+`run` also accepts `--provider <id> --model <tier|literal>` instead of `--role` (the literal
+form takes any model id the provider serves, e.g. `opencode-go/kimi-k3`, even if it isn't in
+the config), `--agent <name>` for opencode workers, and `--task-file <path>` (or stdin) instead
+of `--task`. It returns JSON with `result`,
 `session_id`, `usage`, and a computed `cost_usd` when `pricing` is set. A failed review is best
 handled with `--resume` (keeps context, pays only the delta) rather than a fresh worker.
 
@@ -118,23 +147,32 @@ handled with `--resume` (keeps context, pays only the delta) rather than a fresh
   role with `Bash` therefore has effectively **full shell access** inside its `cwd`, regardless
   of `permissionMode`. Give `Bash` only to roles that genuinely need it — in the example config
   `grunt` deliberately has none. Worker edits are reviewable via `git diff`.
+- **opencode workers auto-approve.** A headless worker cannot answer permission prompts, so
+  `permissionMode` `acceptEdits` / `bypassPermissions` (the default is `acceptEdits`) maps to
+  opencode's `--auto` — the worker approves every tool call that isn't explicitly denied,
+  **including shell commands**. To restrict an opencode worker, define an opencode agent with
+  denied permissions and set it on the role (`"agent": "..."`).
 - **Cost accounting is our own.** The CLI's `total_cost_usd` is computed with Anthropic prices
   and is **unreliable for third-party models**, so fleet.mjs uses the config's `pricing` field
-  to compute cost instead. Configure `pricing` if you want accurate numbers.
+  to compute cost instead. Configure `pricing` if you want accurate numbers. On the opencode
+  runner, opencode's own per-token cost figure is used as a fallback (`cost_source:
+  "opencode-reported"`) — on flat-rate plans like OpenCode Go that number is notional, not
+  billed.
 
 ## Compatibility
 
-The env-var approach only works with **Anthropic-Messages-compatible** endpoints. Pure
-OpenAI-format providers need a shim (claude-code-router / LiteLLM) and are intentionally **not
-part of v1**.
+The **claude runner** (env-var approach) only works with **Anthropic-Messages-compatible**
+endpoints. Pure OpenAI-format providers are covered by the **opencode runner** instead — the
+opencode CLI speaks both formats natively, so no shim (claude-code-router / LiteLLM) is needed.
 
-Confirmed-compatible providers:
+Confirmed-compatible:
 
-| Provider   | Base URL                             | Compatible |
-|------------|--------------------------------------|------------|
-| DeepSeek   | `https://api.deepseek.com/anthropic` | yes |
-| z.ai / GLM | `https://api.z.ai/api/anthropic`     | yes |
-| OpenRouter | `https://openrouter.ai/api`          | yes ("Anthropic skin", incl. tool-use / thinking) |
+| Provider        | Runner   | Base URL / auth                      | Notes |
+|-----------------|----------|--------------------------------------|-------|
+| DeepSeek        | claude   | `https://api.deepseek.com/anthropic` | |
+| z.ai / GLM      | claude   | `https://api.z.ai/api/anthropic`     | |
+| OpenRouter      | claude   | `https://openrouter.ai/api`          | "Anthropic skin", incl. tool-use / thinking |
+| OpenCode Go/Zen | opencode | via `opencode auth` / `/connect`     | all Go models incl. OpenAI-format-only ones (`glm-5.2`, `kimi-k3`, ...) |
 
 The model names and prices in `fleet.config.example.json` are **examples** (prices as of
 July 2026), not guarantees. Run

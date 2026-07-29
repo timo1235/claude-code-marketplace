@@ -33,6 +33,15 @@ const AUTH_ENV_VARS = [
 
 const TIERS = ['strong', 'default', 'fast'];
 
+// Worker runtimes. "claude" spawns a headless `claude -p` against an
+// Anthropic-compatible baseUrl; "opencode" spawns `opencode run`, which brings
+// its own provider auth (`opencode auth` / auth.json) and model catalog.
+const RUNNERS = ['claude', 'opencode'];
+
+function runnerOf(provider) {
+  return provider.runner || 'claude';
+}
+
 // ---------------------------------------------------------------------------
 // Error helpers
 // ---------------------------------------------------------------------------
@@ -133,11 +142,23 @@ function validateConfig(config, configPath) {
     if (!p || typeof p !== 'object') {
       throw new FleetError(`Config ${configPath}: provider "${id}" must be an object.`, 2);
     }
-    if (!p.baseUrl) {
-      throw new FleetError(`Config ${configPath}: provider "${id}" is missing "baseUrl".`, 2);
+    const runner = runnerOf(p);
+    if (!RUNNERS.includes(runner)) {
+      throw new FleetError(
+        `Config ${configPath}: provider "${id}" has unknown runner "${runner}" ` +
+          `(supported: ${RUNNERS.join(', ')}).`,
+        2,
+      );
     }
-    if (!p.apiKeyEnv) {
-      throw new FleetError(`Config ${configPath}: provider "${id}" is missing "apiKeyEnv".`, 2);
+    // The claude runner talks to an Anthropic-compatible endpoint itself and
+    // needs URL + key. The opencode runner authenticates via `opencode auth`.
+    if (runner === 'claude') {
+      if (!p.baseUrl) {
+        throw new FleetError(`Config ${configPath}: provider "${id}" is missing "baseUrl".`, 2);
+      }
+      if (!p.apiKeyEnv) {
+        throw new FleetError(`Config ${configPath}: provider "${id}" is missing "apiKeyEnv".`, 2);
+      }
     }
     if (!p.models || typeof p.models !== 'object') {
       throw new FleetError(`Config ${configPath}: provider "${id}" is missing "models".`, 2);
@@ -271,11 +292,15 @@ async function cmdDoctor(argv) {
   process.stdout.write('\nProviders:\n');
 
   for (const [id, p] of Object.entries(config.providers)) {
-    const keySet = lookupKey(p.apiKeyEnv, envFileValues) ? '✓' : '✗';
     process.stdout.write(`  ${id}\n`);
-    process.stdout.write(`    baseUrl:        ${p.baseUrl}\n`);
-    process.stdout.write(`    apiKeyEnv:      ${p.apiKeyEnv} [${keySet}]\n`);
-    process.stdout.write(`    smallFastModel: ${p.smallFastModel || '(none)'}\n`);
+    if (runnerOf(p) === 'opencode') {
+      process.stdout.write(`    runner:         opencode (auth via \`opencode auth\`)\n`);
+    } else {
+      const keySet = lookupKey(p.apiKeyEnv, envFileValues) ? '✓' : '✗';
+      process.stdout.write(`    baseUrl:        ${p.baseUrl}\n`);
+      process.stdout.write(`    apiKeyEnv:      ${p.apiKeyEnv} [${keySet}]\n`);
+      process.stdout.write(`    smallFastModel: ${p.smallFastModel || '(none)'}\n`);
+    }
     const models = Object.entries(p.models || {})
       .map(([t, m]) => `${t}=${m}`)
       .join(', ');
@@ -292,22 +317,30 @@ async function cmdDoctor(argv) {
     );
   }
 
-  process.stdout.write('\nclaude CLI:\n');
-  const claudeVersion = await getClaudeVersion();
-  if (claudeVersion.ok) {
-    process.stdout.write(`  found: ${claudeVersion.version}\n`);
-  } else {
-    process.stdout.write(`  NOT found in PATH (${claudeVersion.error})\n`);
+  const runnersInUse = new Set(Object.values(config.providers).map((p) => runnerOf(p)));
+  for (const runner of RUNNERS) {
+    if (!runnersInUse.has(runner)) continue;
+    process.stdout.write(`\n${runner} CLI:\n`);
+    const version = await getCliVersion(runner);
+    if (version.ok) {
+      process.stdout.write(`  found: ${version.version}\n`);
+    } else {
+      process.stdout.write(`  NOT found in PATH (${version.error})\n`);
+    }
   }
 
   if (flags.ping) {
     process.stdout.write('\nLive ping (fast-tier model, 1 turn):\n');
     let anyFailed = false;
     for (const [id, p] of Object.entries(config.providers)) {
-      const key = lookupKey(p.apiKeyEnv, envFileValues);
-      if (!key) {
-        process.stdout.write(`  ${id}: skipped (no key set)\n`);
-        continue;
+      const runner = runnerOf(p);
+      let key = null;
+      if (runner === 'claude') {
+        key = lookupKey(p.apiKeyEnv, envFileValues);
+        if (!key) {
+          process.stdout.write(`  ${id}: skipped (no key set)\n`);
+          continue;
+        }
       }
       const model = resolveModel(p, 'fast') || resolveModel(p, undefined);
       if (!model) {
@@ -315,7 +348,8 @@ async function cmdDoctor(argv) {
         process.stdout.write(`  ${id}: FAILED — no model defined in "models".\n`);
         continue;
       }
-      const res = await pingProvider(p, key, model);
+      const res =
+        runner === 'opencode' ? await pingOpencode(model) : await pingProvider(p, key, model);
       if (res.ok) {
         process.stdout.write(`  ${id}: OK (${model})\n`);
       } else {
@@ -327,9 +361,9 @@ async function cmdDoctor(argv) {
   }
 }
 
-function getClaudeVersion() {
+function getCliVersion(cmd) {
   return new Promise((resolve) => {
-    const child = spawn('claude', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(cmd, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => (out += d));
@@ -403,6 +437,40 @@ function pingProvider(provider, key, model) {
   });
 }
 
+function pingOpencode(model) {
+  return new Promise((resolve) => {
+    const args = ['run', '--model', model, '--format', 'json', '--pure', 'Reply with exactly: OK'];
+    const child = spawn('opencode', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    let err = '';
+    let done = false;
+    const finish = (result) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(result);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill('SIGKILL');
+      } catch {}
+      finish({ ok: false, error: 'timeout after 60s' });
+    }, 60000);
+
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (err += d));
+    child.on('error', (e) => finish({ ok: false, error: e.message }));
+    child.on('close', (code) => {
+      const parsed = parseOpencodeOutput(out);
+      if (code === 0 && parsed.errors.length === 0 && parsed.parsedAny) {
+        finish({ ok: true });
+      } else {
+        finish({ ok: false, error: parsed.errors.join('; ') || err.trim() || `exit ${code}` });
+      }
+    });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // list
 // ---------------------------------------------------------------------------
@@ -416,13 +484,14 @@ function cmdList() {
     rows.push({
       role: name,
       provider: r.provider,
+      runner: runnerOf(provider),
       model,
       tools: r.tools || '(default)',
       permissionMode: r.permissionMode || config.defaults?.permissionMode || '(default)',
     });
   }
 
-  const cols = ['role', 'provider', 'model', 'tools', 'permissionMode'];
+  const cols = ['role', 'provider', 'runner', 'model', 'tools', 'permissionMode'];
   const widths = {};
   for (const c of cols) {
     widths[c] = c.length;
@@ -501,6 +570,65 @@ function computeCost(provider, model, usage) {
   return { cost_usd: Math.round(cost * 1e6) / 1e6, cost_source: 'config-pricing' };
 }
 
+// `opencode run --format json` emits NDJSON events: step_start, text (part.text),
+// tool, step_finish (part.tokens/{input,output,reasoning,cache:{read,write}} and
+// part.cost), error. One step_finish per assistant turn.
+function parseOpencodeOutput(stdout) {
+  const events = [];
+  for (const line of String(stdout).split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed[0] !== '{') continue;
+    try {
+      events.push(JSON.parse(trimmed));
+    } catch {}
+  }
+
+  let sessionId = null;
+  const texts = [];
+  const errors = [];
+  const usage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+  };
+  let cost = 0;
+  let hasCost = false;
+  let steps = 0;
+
+  for (const ev of events) {
+    if (!sessionId && ev.sessionID) sessionId = ev.sessionID;
+    const part = ev.part || {};
+    if (ev.type === 'text' && typeof part.text === 'string') {
+      texts.push(part.text);
+    } else if (ev.type === 'step_finish') {
+      steps++;
+      const tok = part.tokens || {};
+      usage.input_tokens += tok.input || 0;
+      usage.output_tokens += tok.output || 0;
+      usage.cache_read_input_tokens += tok.cache?.read || 0;
+      usage.cache_creation_input_tokens += tok.cache?.write || 0;
+      if (typeof part.cost === 'number') {
+        cost += part.cost;
+        hasCost = true;
+      }
+    } else if (ev.type === 'error' || part.error) {
+      const e = ev.error || part.error || ev;
+      errors.push(typeof e === 'string' ? e : JSON.stringify(e));
+    }
+  }
+
+  return {
+    parsedAny: events.length > 0,
+    sessionId,
+    text: texts.join('\n'),
+    usage,
+    cost: hasCost ? cost : null,
+    steps,
+    errors,
+  };
+}
+
 function extractUsage(cliJson) {
   const u = (cliJson && cliJson.usage) || {};
   return {
@@ -546,14 +674,19 @@ async function cmdRun(argv) {
     );
   }
 
-  // Key.
-  const key = lookupKey(provider.apiKeyEnv, envFileValues);
-  if (!key) {
-    throw new FleetError(
-      `API key not set for provider "${providerId}". Set env var ${provider.apiKeyEnv}, ` +
-        `or add it to the configured envFile.`,
-      2,
-    );
+  const runner = runnerOf(provider);
+
+  // Key — only the claude runner needs one; opencode authenticates itself.
+  let key = null;
+  if (runner === 'claude') {
+    key = lookupKey(provider.apiKeyEnv, envFileValues);
+    if (!key) {
+      throw new FleetError(
+        `API key not set for provider "${providerId}". Set env var ${provider.apiKeyEnv}, ` +
+          `or add it to the configured envFile.`,
+        2,
+      );
+    }
   }
 
   const task = readTask(flags);
@@ -589,33 +722,67 @@ async function cmdRun(argv) {
 
   const settingSources = defaults.settingSources !== undefined ? String(defaults.settingSources) : '';
 
-  const env = buildWorkerEnv(provider, key);
-
-  const args = [
-    '-p',
-    task,
-    '--output-format',
-    'json',
-    '--model',
-    model,
-    '--allowedTools',
-    tools,
-    '--permission-mode',
-    permissionMode,
-    '--max-turns',
-    String(maxTurns),
-    '--setting-sources',
-    settingSources,
-    '--strict-mcp-config',
-    '--append-system-prompt',
-    WORKER_PREAMBLE,
-  ];
-  if (flags.resume !== undefined && typeof flags.resume === 'string') {
-    args.push('--resume', String(flags.resume));
+  let cmd;
+  let args;
+  let env;
+  if (runner === 'opencode') {
+    // opencode has no --allowedTools; tool restrictions live in opencode agent
+    // configs (role "agent" → --agent). Warn instead of silently ignoring.
+    if (tools) {
+      process.stderr.write(
+        `Warning: "tools" is ignored for opencode runner (provider "${providerId}"). ` +
+          `Restrict tools via an opencode agent and the role's "agent" field.\n`,
+      );
+    }
+    cmd = 'opencode';
+    // --dir pins the worker's working directory: opencode resolves it from the
+    // environment (PWD), not from the child process cwd, so cwd alone is ignored.
+    args = ['run', '--model', model, '--format', 'json', '--pure', '--dir', cwd];
+    // Headless workers cannot answer permission prompts. acceptEdits/
+    // bypassPermissions map to opencode's --auto; anything else runs with
+    // opencode's default permissions (read-mostly tasks).
+    if (permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions') {
+      args.push('--auto');
+    }
+    const agentName =
+      (flags.agent !== undefined && typeof flags.agent === 'string' && flags.agent) ||
+      role?.agent;
+    if (agentName) args.push('--agent', String(agentName));
+    if (flags.resume !== undefined && typeof flags.resume === 'string') {
+      args.push('--session', String(flags.resume));
+    }
+    // No --append-system-prompt equivalent → preamble goes into the message.
+    args.push(WORKER_PREAMBLE + '\n\n' + task);
+    env = { ...process.env, PWD: cwd };
+  } else {
+    cmd = 'claude';
+    env = buildWorkerEnv(provider, key);
+    args = [
+      '-p',
+      task,
+      '--output-format',
+      'json',
+      '--model',
+      model,
+      '--allowedTools',
+      tools,
+      '--permission-mode',
+      permissionMode,
+      '--max-turns',
+      String(maxTurns),
+      '--setting-sources',
+      settingSources,
+      '--strict-mcp-config',
+      '--append-system-prompt',
+      WORKER_PREAMBLE,
+    ];
+    if (flags.resume !== undefined && typeof flags.resume === 'string') {
+      args.push('--resume', String(flags.resume));
+    }
   }
 
   const started = Date.now();
-  const result = await runClaude(args, env, cwd, timeoutSec);
+  const result = await runWorker(cmd, args, env, cwd, timeoutSec);
   const duration_ms = Date.now() - started;
 
   const base = { provider: providerId, model, role: roleName };
@@ -640,7 +807,55 @@ async function cmdRun(argv) {
     return;
   }
 
-  // Parse JSON output.
+  if (runner === 'opencode') {
+    const parsed = parseOpencodeOutput(result.stdout);
+    if (!parsed.parsedAny) {
+      emitError(
+        {
+          ...base,
+          ok: false,
+          error: 'unparseable worker output',
+          duration_ms,
+          stderr: truncate(result.stderr || result.stdout, 2000),
+        },
+        format,
+        result.code || 1,
+      );
+      return;
+    }
+    const isError = result.code !== 0 || parsed.errors.length > 0;
+    // Config pricing wins; otherwise fall back to opencode's own cost figure
+    // (models.dev pricing — notional on flat-rate plans like OpenCode Go).
+    let { cost_usd, cost_source } = computeCost(provider, model, parsed.usage);
+    if (cost_usd == null && parsed.cost != null) {
+      cost_usd = Math.round(parsed.cost * 1e6) / 1e6;
+      cost_source = 'opencode-reported';
+    }
+    const out = {
+      ok: !isError,
+      provider: providerId,
+      model,
+      role: roleName,
+      session_id: parsed.sessionId,
+      num_turns: parsed.steps || null,
+      duration_ms,
+      usage: parsed.usage,
+      cost_usd,
+      cost_source,
+      cli_reported_cost_usd: parsed.cost,
+      result: parsed.text || null,
+    };
+    if (isError) {
+      out.error = parsed.errors.join('; ') || `worker exited with code ${result.code}`;
+      out.stderr = truncate(result.stderr, 2000);
+      emitRun(out, format);
+      process.exit(result.code || 1);
+    }
+    emitRun(out, format);
+    return;
+  }
+
+  // claude runner: a single JSON object on stdout.
   let cliJson = null;
   try {
     cliJson = JSON.parse(result.stdout);
@@ -708,13 +923,13 @@ function emitError(obj, format, exitCode) {
   process.exit(exitCode);
 }
 
-function runClaude(args, env, cwd, timeoutSec) {
+function runWorker(cmd, args, env, cwd, timeoutSec) {
   return new Promise((resolve) => {
     let child;
     try {
       // detached: give the worker its own process group so we can kill the whole
       // tree (worker + anything it spawned, e.g. a Bash tool) on timeout.
-      child = spawn('claude', args, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      child = spawn(cmd, args, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     } catch (e) {
       resolve({ spawnError: e.message, stdout: '', stderr: '', code: 1 });
       return;
@@ -781,7 +996,7 @@ Usage:
       --ping    minimal live 1-turn call per provider with a set key (exit 1 on any failure).
 
   fleet.mjs list
-      Compact table of roles: role, provider, resolved model, tools, permissionMode.
+      Compact table of roles: role, provider, runner, resolved model, tools, permissionMode.
 
   fleet.mjs run (--role <name> | --provider <id> [--model <tier|literal>]) <task-source> [options]
       Task source (exactly one): --task "<text>" | --task-file <path> | stdin.
@@ -791,9 +1006,17 @@ Usage:
         --format json|text       default json.
         --resume <session-id>    continue a prior worker session.
         --timeout <sec>          hard timeout (overrides config defaults.timeoutSec).
-        --max-turns <n>          override role/defaults.
-        --permission-mode <m>    override role/defaults.
-        --tools "<list>"         override role tools (comma-separated allowlist).
+        --max-turns <n>          override role/defaults (claude runner only).
+        --permission-mode <m>    override role/defaults (opencode runner: acceptEdits/
+                                 bypassPermissions map to opencode's --auto).
+        --tools "<list>"         override role tools (claude runner only; opencode
+                                 restricts tools via --agent / role "agent").
+        --agent <name>           opencode agent to run the worker as (opencode runner).
+
+Runners:
+  Each provider runs on a runner: "claude" (default; headless claude -p against an
+  Anthropic-compatible baseUrl) or "opencode" (opencode run; auth + model catalog come
+  from the opencode CLI, model ids look like "opencode-go/glm-5.2").
 
 Config search order:
   $FLEET_CONFIG → $CLAUDE_PROJECT_DIR/.claude/fleet.config.json →

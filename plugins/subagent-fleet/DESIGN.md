@@ -72,7 +72,7 @@ has a **`smallFastModel`** that is set as `ANTHROPIC_SMALL_FAST_MODEL` (and
 `ANTHROPIC_DEFAULT_HAIKU_MODEL`) in the worker env.
 
 Pure OpenAI-format providers need a shim (claude-code-router / LiteLLM) — deliberately
-not part of v1.
+not part of v1. Since v1.1 the **opencode runner** (below) covers them without a shim.
 
 ## Components
 
@@ -184,6 +184,44 @@ Provider-agnostic orchestration policy. Triggers: "fleet", "delegate", "subagent
 - When **not** to delegate: changes below break-even (roughly <3 files / <100 lines — the
   spec costs as much as the task), work the cheap model won't land in 1–2 review cycles,
   tight iteration with the user, pure decisions.
+
+## opencode runner (v1.1)
+
+Motivation: subscription plans like **OpenCode Go** ($10/month: GLM-5.2, Qwen 3.7, Kimi K3,
+DeepSeek, ...) serve most models only in **OpenAI format** — unreachable for `claude -p`
+workers. (Qwen/MiniMax are the exception: Zen exposes them Anthropic-compatibly under
+`https://opencode.ai/zen/go/v1/messages`.) Instead of a shim, workers can run on the
+**opencode CLI**, which speaks both formats natively.
+
+Per-provider field `"runner": "opencode"` (default `"claude"`). Differences:
+
+- **No `baseUrl`/`apiKeyEnv`** — auth comes from `opencode auth` / `/connect`
+  (`~/.local/share/opencode/auth.json`). `doctor` checks the binary; `doctor --ping` does a
+  real 1-turn run.
+- **Model ids** are `catalog/model` (e.g. `opencode-go/glm-5.2`), listable via
+  `opencode models`. Tiers resolve exactly like on the claude runner; literals pass through.
+- **Dispatch**: `opencode run --model <id> --format json --pure --dir <cwd> [--auto]
+  [--agent <name>] [--session <id>] "<preamble + task>"`.
+  - `--format json` emits **NDJSON events** (`step_start`, `text`, `step_finish`, `error`);
+    fleet.mjs concatenates `text` parts, sums `step_finish` tokens
+    (`{input, output, reasoning, cache:{read,write}}`) and `cost`, and normalizes into the
+    same output JSON as the claude runner.
+  - **`--dir` is mandatory**: opencode resolves its working directory from the environment
+    (`PWD`), *not* from the child-process cwd — without `--dir` a worker edits files in the
+    orchestrator's directory. Verified empirically; fleet.mjs sets both `--dir` and `PWD`.
+  - No `--append-system-prompt` → the worker preamble is prepended to the task message.
+  - No `--allowedTools` / `--max-turns` → role `tools` is ignored (with a warning); tool
+    restriction goes through opencode **agents** (role field `agent` / flag `--agent`).
+  - `permissionMode` `acceptEdits`/`bypassPermissions` map to `--auto` (headless workers
+    can't answer prompts); anything else runs with opencode's default permissions.
+  - Resume: `--resume <session_id>` maps to opencode's `--session`. The `sessionID` from the
+    event stream is returned as `session_id`.
+- **Cost**: config `pricing` wins; otherwise opencode's summed per-step `cost` is reported as
+  `cost_source: "opencode-reported"` (models.dev pricing — notional on flat-rate plans).
+
+Verified live against OpenCode Go (opencode 1.18.9) on 2026-07-29: doctor/ping, dispatch with
+`opencode-go/glm-5.2` (file created in `--cwd`), resume with retained context, ad-hoc literal
+model (`opencode-go/kimi-k3`), error path (unknown model → `ok:false`, exit 1).
 
 ## Security
 

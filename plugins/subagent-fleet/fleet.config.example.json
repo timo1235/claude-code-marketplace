@@ -27,6 +27,14 @@
       "apiKeyEnv": "OPENROUTER_API_KEY",
       "smallFastModel": "z-ai/glm-4.6",
       "models": { "strong": "deepseek/deepseek-v4", "default": "z-ai/glm-4.6", "fast": "z-ai/glm-4.6" }
+    },
+    "opencode": {
+      "runner": "opencode",
+      "models": {
+        "strong": "opencode-go/glm-5.2",
+        "default": "opencode-go/qwen3.7-plus",
+        "fast": "opencode-go/qwen3.6-plus"
+      }
     }
   },
   "roles": {

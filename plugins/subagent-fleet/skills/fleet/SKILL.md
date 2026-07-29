@@ -1,6 +1,6 @@
 ---
 name: fleet
-description: Orchestration policy for offloading large, mechanical, clearly-specifiable execution batches (migrations, boilerplate, mass edits, research fan-outs) to cheaper third-party workers (GLM/z.ai, DeepSeek, OpenRouter, ...) via fleet.mjs. You plan, decompose, review and integrate yourself. Use when a task contains a sizable mechanical chunk that a cheap model can execute from a written spec — NOT for small edits, decision-heavy work, or tight iteration with the user. Also use when the user says "fleet", "glm", "deepseek", "openrouter", or "use a cheaper model".
+description: Orchestration policy for offloading large, mechanical, clearly-specifiable execution batches (migrations, boilerplate, mass edits, research fan-outs) to cheaper third-party workers (GLM/z.ai, DeepSeek, OpenRouter, OpenCode Go, ...) via fleet.mjs. You plan, decompose, review and integrate yourself. Use when a task contains a sizable mechanical chunk that a cheap model can execute from a written spec — NOT for small edits, decision-heavy work, or tight iteration with the user. Also use when the user says "fleet", "glm", "deepseek", "openrouter", "opencode", "qwen", "kimi", or "use a cheaper model".
 plugin-scoped: true
 allowed-tools: Read, Bash, Grep, Glob, TodoWrite
 ---
@@ -10,11 +10,13 @@ allowed-tools: Read, Bash, Grep, Glob, TodoWrite
 You are running as the frontier model — the most capable and most expensive one in reach.
 Your strength is **planning, decomposing, reviewing, and long coherent agentic work**. Don't
 burn that on grunt work. Mechanical and clearly-scoped execution is **delegated** to cheaper
-third-party workers (GLM/z.ai, DeepSeek, OpenRouter, ...), and you review their results.
+third-party workers (GLM/z.ai, DeepSeek, OpenRouter, OpenCode Go, ...), and you review their
+results.
 
-The workers are separate headless `claude -p` processes on other providers, dispatched through
-`scripts/fleet.mjs`. Which providers, models and roles exist is **user configuration** — never
-assume; discover it (see Setup check and `list`).
+The workers are separate headless processes dispatched through `scripts/fleet.mjs` — either
+`claude -p` pointed at an Anthropic-compatible provider, or `opencode run` (runner
+`"opencode"`, which brings its own auth and model catalog). Which providers, models and roles
+exist is **user configuration** — never assume; discover it (see Setup check and `list`).
 
 ## Your role (what you do yourself)
 
@@ -54,6 +56,10 @@ node $CLAUDE_PLUGIN_ROOT/scripts/fleet.mjs run --role <role> --task "<assignment
 ```
 
 Alternatively target a provider/model directly with `--provider <id> --model <tier|literal>`.
+The literal form takes **any model id the provider serves**, not just the configured tiers —
+e.g. when the user says "use kimi-k3 on opencode go", dispatch
+`--provider opencode --model opencode-go/kimi-k3` even though only the tiers appear in the
+config. (Model ids on the opencode runner are `catalog/model`, listable via `opencode models`.)
 
 ### Run non-trivial dispatches in the background
 
@@ -92,10 +98,12 @@ If a review **fails**, don't spawn a fresh worker — resume the same session wi
 assignment (it keeps the full context, so you only pay for the delta):
 
 ```
-node $CLAUDE_PLUGIN_ROOT/scripts/fleet.mjs run --resume <session_id> --task "<precise fix>"
+node $CLAUDE_PLUGIN_ROOT/scripts/fleet.mjs run --role <role> --resume <session_id> --task "<precise fix>"
 ```
 
-The `session_id` is in the JSON output of the original `run`. You own the final result, not the
+The `session_id` is in the JSON output of the original `run`. A resume still needs `--role` or
+`--provider`, and if the original run used a non-default `--model`, pass the same one again —
+otherwise the follow-up runs on the role/provider default. You own the final result, not the
 worker.
 
 ## Web search stays with you
