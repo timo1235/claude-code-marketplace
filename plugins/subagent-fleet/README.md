@@ -116,7 +116,35 @@ settings inside a worker.) opencode workers run with `--pure` (no external openc
   `--agent`).
 - **defaults** — `permissionMode`, `maxTurns`, and the hard-kill `timeoutSec` (default 30 min).
   Optionally `settingSources` (default `""` = fully isolated worker) if you need user/project
-  settings inside workers.
+  settings inside workers, and `workerStateDir` (see below).
+
+### Worker session storage
+
+Both runners persist a session per worker run, and by default they persist it into the same
+store the orchestrator uses — `claude -p` writes
+`$CLAUDE_CONFIG_DIR/projects/<slug>/<uuid>.jsonl`, `opencode run` writes
+`~/.local/share/opencode/opencode.db`. Anything that lists those as sessions (the `/resume`
+picker, session-browsing UIs such as CloudCLI) then fills up with worker transcripts.
+
+Workers therefore get a state dir of their own, `~/.local/state/subagent-fleet` by default:
+
+| Runner | Variable set for the worker | Worker sessions land in |
+|---|---|---|
+| `claude` | `CLAUDE_CONFIG_DIR` | `<stateDir>/claude/projects/…` |
+| `opencode` | `OPENCODE_DB` | `<stateDir>/opencode/fleet.db` |
+
+This is free of side effects: workers already run with `--setting-sources ""`, so they read
+nothing out of the orchestrator's config dir, and neither variable touches auth — the claude
+runner authenticates from `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN` in the environment, and
+opencode's `auth.json` stays in the shared data dir next to the relocated database. `--resume`
+keeps working, since a resumed run gets the same environment.
+
+- `"workerStateDir": "~/somewhere/else"` — put it elsewhere.
+- `"workerStateDir": ""` — opt out; workers share the orchestrator's state again.
+- An inherited `CLAUDE_CONFIG_DIR` / `OPENCODE_DB` always wins, so you can override per call.
+
+The state dir is pure scratch — delete it whenever you like; only `--resume` of an older
+worker session depends on it.
 
 ## Usage
 

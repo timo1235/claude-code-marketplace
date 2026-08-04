@@ -348,8 +348,11 @@ async function cmdDoctor(argv) {
         process.stdout.write(`  ${id}: FAILED — no model defined in "models".\n`);
         continue;
       }
+      const stateDir = resolveWorkerStateDir(config);
       const res =
-        runner === 'opencode' ? await pingOpencode(model) : await pingProvider(p, key, model);
+        runner === 'opencode'
+          ? await pingOpencode(model, stateDir)
+          : await pingProvider(p, key, model, stateDir);
       if (res.ok) {
         process.stdout.write(`  ${id}: OK (${model})\n`);
       } else {
@@ -376,9 +379,9 @@ function getCliVersion(cmd) {
   });
 }
 
-function pingProvider(provider, key, model) {
+function pingProvider(provider, key, model, stateDir) {
   return new Promise((resolve) => {
-    const env = buildWorkerEnv(provider, key);
+    const env = buildWorkerEnv(provider, key, stateDir);
     const args = [
       '-p',
       'Reply with exactly: OK',
@@ -437,10 +440,11 @@ function pingProvider(provider, key, model) {
   });
 }
 
-function pingOpencode(model) {
+function pingOpencode(model, stateDir) {
   return new Promise((resolve) => {
     const args = ['run', '--model', model, '--format', 'json', '--pure', 'Reply with exactly: OK'];
-    const child = spawn('opencode', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const env = applyWorkerStateDir({ ...process.env }, stateDir, 'opencode');
+    const child = spawn('opencode', args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     let done = false;
@@ -510,7 +514,45 @@ function cmdList() {
 // Worker env
 // ---------------------------------------------------------------------------
 
-function buildWorkerEnv(provider, key) {
+// Both runners persist a session per worker run, by default into the same store the
+// orchestrator uses: `claude -p` writes $CLAUDE_CONFIG_DIR/projects/<slug>/<uuid>.jsonl,
+// `opencode run` writes ~/.local/share/opencode/opencode.db. Anything that lists those
+// as sessions — the /resume picker, session-browsing UIs like CloudCLI — then fills up
+// with worker transcripts. Point the workers at a state dir of their own instead.
+// Override the location with defaults.workerStateDir; set it to "" to opt out and let
+// workers share the orchestrator's state.
+const DEFAULT_WORKER_STATE_DIR = path.join(os.homedir(), '.local', 'state', 'subagent-fleet');
+
+function resolveWorkerStateDir(config) {
+  const configured = config?.defaults?.workerStateDir;
+  if (configured === '') return null;
+  if (!configured) return DEFAULT_WORKER_STATE_DIR;
+  const raw = String(configured);
+  const expanded = raw.startsWith('~/') ? path.join(os.homedir(), raw.slice(2)) : raw;
+  return path.resolve(expanded);
+}
+
+// Redirect worker session storage. An explicitly inherited CLAUDE_CONFIG_DIR /
+// OPENCODE_DB always wins, so a caller can still override per invocation.
+function applyWorkerStateDir(env, stateDir, runner) {
+  if (!stateDir) return env;
+  if (runner === 'opencode') {
+    // opencode's auth.json stays in the shared data dir — OPENCODE_DB only moves
+    // session storage, so provider auth is unaffected.
+    if (!env.OPENCODE_DB) {
+      const db = path.join(stateDir, 'opencode', 'fleet.db');
+      fs.mkdirSync(path.dirname(db), { recursive: true });
+      env.OPENCODE_DB = db;
+    }
+  } else if (!env.CLAUDE_CONFIG_DIR) {
+    // Workers run with --setting-sources '' and env-supplied auth, so they need
+    // nothing out of the orchestrator's config dir.
+    env.CLAUDE_CONFIG_DIR = path.join(stateDir, 'claude');
+  }
+  return env;
+}
+
+function buildWorkerEnv(provider, key, stateDir) {
   const env = { ...process.env };
   for (const v of AUTH_ENV_VARS) delete env[v];
   env.ANTHROPIC_BASE_URL = provider.baseUrl;
@@ -520,7 +562,7 @@ function buildWorkerEnv(provider, key) {
     env.ANTHROPIC_DEFAULT_HAIKU_MODEL = provider.smallFastModel;
   }
   env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = '1';
-  return env;
+  return applyWorkerStateDir(env, stateDir, 'claude');
 }
 
 // ---------------------------------------------------------------------------
@@ -675,6 +717,7 @@ async function cmdRun(argv) {
   }
 
   const runner = runnerOf(provider);
+  const workerStateDir = resolveWorkerStateDir(config);
 
   // Key — only the claude runner needs one; opencode authenticates itself.
   let key = null;
@@ -753,10 +796,10 @@ async function cmdRun(argv) {
     }
     // No --append-system-prompt equivalent → preamble goes into the message.
     args.push(WORKER_PREAMBLE + '\n\n' + task);
-    env = { ...process.env, PWD: cwd };
+    env = applyWorkerStateDir({ ...process.env, PWD: cwd }, workerStateDir, 'opencode');
   } else {
     cmd = 'claude';
-    env = buildWorkerEnv(provider, key);
+    env = buildWorkerEnv(provider, key, workerStateDir);
     args = [
       '-p',
       task,

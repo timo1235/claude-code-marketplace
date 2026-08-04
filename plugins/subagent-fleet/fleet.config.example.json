@@ -42,5 +42,5 @@
     "researcher": { "provider": "deepseek", "model": "fast",   "tools": "Read,Grep,Glob,WebFetch" },
     "grunt":      { "provider": "deepseek", "model": "fast",   "tools": "Read,Edit,Write,Grep,Glob" }
   },
-  "defaults": { "permissionMode": "acceptEdits", "maxTurns": 40, "timeoutSec": 1800 }
+  "defaults": { "permissionMode": "acceptEdits", "maxTurns": 40, "timeoutSec": 1800, "workerStateDir": "~/.local/state/subagent-fleet" }
 }
