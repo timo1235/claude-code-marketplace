@@ -178,8 +178,11 @@ Provider-agnostic orchestration policy. Triggers: "fleet", "delegate", "subagent
   precise fix assignment instead of a fresh worker.
 - **Parallelism**: parallel workers only on **disjoint files**; otherwise sequential or
   per git worktree (point `--cwd` at a worktree).
-- Web search stays with the orchestrator (WebSearch is a server-side Anthropic tool, not
-  available on third-party backends); workers get concrete URLs for `WebFetch`.
+- Web search depends on the runner: on the `claude` runner it stays with the orchestrator
+  (WebSearch is a server-side Anthropic tool, not available on third-party backends) and
+  workers get concrete URLs for `WebFetch`. The `opencode` runner has its own client-side
+  `websearch` (Exa) — but only for provider id `opencode`, or with `OPENCODE_ENABLE_EXA=1`
+  for `opencode-go/*`. Judging the sources stays with the orchestrator either way.
 - Cost awareness: the JSON output contains token usage + computed cost if configured.
 - When **not** to delegate: changes below break-even (roughly <3 files / <100 lines — the
   spec costs as much as the task), work the cheap model won't land in 1–2 review cycles,

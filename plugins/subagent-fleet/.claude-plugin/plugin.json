@@ -1,6 +1,6 @@
 {
   "name": "subagent-fleet",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Orchestrator on a frontier model, execution on cheap third-party workers: delegates tasks to configurable Anthropic-compatible providers (z.ai/GLM, DeepSeek, OpenRouter) via headless claude -p workers and reviews their results.",
   "author": {
     "name": "Timo",

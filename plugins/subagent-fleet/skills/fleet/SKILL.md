@@ -106,11 +106,25 @@ The `session_id` is in the JSON output of the original `run`. A resume still nee
 otherwise the follow-up runs on the role/provider default. You own the final result, not the
 worker.
 
-## Web search stays with you
+## Web search: depends on the runner
 
-`WebSearch` is a server-side Anthropic tool and is **not available on third-party backends**, so
-do web search yourself. When a worker needs a page, give it the **concrete URL(s)** to fetch
-with `WebFetch`.
+**`claude` runner (z.ai, DeepSeek, OpenRouter):** `WebSearch` is a server-side Anthropic tool
+and is **not available on third-party backends**. Do the search yourself and hand the worker
+the **concrete URL(s)** to fetch with `WebFetch`.
+
+**`opencode` runner:** opencode ships its own client-side `websearch` tool (Exa), so these
+workers *can* search — no URL pre-collection needed. Two catches:
+
+- The tool is only registered when the provider id is literally `opencode`, or when
+  `OPENCODE_ENABLE_EXA=1` is set. **`opencode-go/*` models are a different provider id**, so
+  they need that env var. `fleet.mjs` passes the parent env through to the worker, so
+  exporting it once is enough. No Exa API key required — it uses the public
+  `mcp.exa.ai/mcp` endpoint.
+- Exa is an embedding search, not a Google query. When a specific source is mandatory
+  (a standard, a statute, a vendor page), still pass the URL rather than trusting its ranking.
+
+Either way, **judging the sources stays with you** — cheap workers do not reliably tell an
+authoritative source from SEO filler.
 
 ## Cost awareness
 
