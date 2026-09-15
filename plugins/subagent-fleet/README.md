@@ -96,7 +96,7 @@ settings inside a worker.) opencode workers run with `--pure` (no external openc
     // provider: which provider; model: a tier name (strong/default/fast) or a literal model id;
     // tools: the worker's allowed-tools allowlist
     "coder":      { "provider": "zai",      "model": "strong", "tools": "Read,Edit,Write,Grep,Glob,Bash" },
-    "researcher": { "provider": "deepseek", "model": "fast",   "tools": "Read,Grep,Glob,WebFetch" },
+    "researcher": { "provider": "zai",      "model": "fast",   "tools": "Read,Grep,Glob,WebSearch,WebFetch" },
     "grunt":      { "provider": "deepseek", "model": "fast",   "tools": "Read,Edit,Write,Grep,Glob" }
   },
 

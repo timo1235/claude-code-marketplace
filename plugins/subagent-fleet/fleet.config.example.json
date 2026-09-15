@@ -39,7 +39,7 @@
   },
   "roles": {
     "coder":      { "provider": "zai",      "model": "strong", "tools": "Read,Edit,Write,Grep,Glob,Bash" },
-    "researcher": { "provider": "deepseek", "model": "fast",   "tools": "Read,Grep,Glob,WebFetch" },
+    "researcher": { "provider": "zai",      "model": "fast",   "tools": "Read,Grep,Glob,WebSearch,WebFetch" },
     "grunt":      { "provider": "deepseek", "model": "fast",   "tools": "Read,Edit,Write,Grep,Glob" }
   },
   "defaults": { "permissionMode": "acceptEdits", "maxTurns": 40, "timeoutSec": 1800, "workerStateDir": "~/.local/state/subagent-fleet" }

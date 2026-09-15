@@ -1,8 +1,6 @@
 ---
 name: fleet
-description: Orchestration policy for offloading large, mechanical, clearly-specifiable execution batches (migrations, boilerplate, mass edits, research fan-outs) to cheaper third-party workers (GLM/z.ai, DeepSeek, OpenRouter, OpenCode Go, ...) via fleet.mjs. You plan, decompose, review and integrate yourself. Use when a task contains a sizable mechanical chunk that a cheap model can execute from a written spec — NOT for small edits, decision-heavy work, or tight iteration with the user. Also use when the user says "fleet", "glm", "deepseek", "openrouter", "opencode", "qwen", "kimi", or "use a cheaper model".
-plugin-scoped: true
-allowed-tools: Read, Bash, Grep, Glob, TodoWrite
+description: Use when a task contains a sizable mechanical, clearly-specifiable execution batch — migrations, boilerplate, mass edits, research fan-outs — that a cheap third-party worker (GLM/z.ai, DeepSeek, OpenRouter, OpenCode Go, ...) could execute from a written spec. NOT for small edits, decision-heavy work, or tight iteration with the user. Also use when the user says "fleet", "glm", "deepseek", "openrouter", "opencode", "qwen", "kimi", or "use a cheaper model".
 ---
 
 # Fleet Orchestrator
@@ -55,6 +53,11 @@ reports.) Then dispatch:
 node $CLAUDE_PLUGIN_ROOT/scripts/fleet.mjs run --role <role> --task "<assignment>" --cwd <dir>
 ```
 
+For anything longer than a couple of lines, **write the assignment to a file and pass
+`--task-file <path>`** instead of `--task` — a multi-paragraph spec in a shell argument breaks
+on quotes, backticks and `$`. Use `--timeout <sec>` when the batch may exceed the configured
+`timeoutSec`. Full flag list: `fleet.mjs --help`.
+
 Alternatively target a provider/model directly with `--provider <id> --model <tier|literal>`.
 The literal form takes **any model id the provider serves**, not just the configured tiers —
 e.g. when the user says "use kimi-k3 on opencode go", dispatch
@@ -63,10 +66,10 @@ config. (Model ids on the opencode runner are `catalog/model`, listable via `ope
 
 ### Run non-trivial dispatches in the background
 
-Your own Bash tool has a **10-minute timeout**; workers may legitimately run longer (up to the
-configured `timeoutSec`, default 30 min). So launch any non-trivial dispatch with the **Bash
-tool in `run_in_background` mode** and poll for completion. Short, trivial dispatches may run in
-the foreground.
+Your own Bash tool defaults to a **2-minute timeout** and caps at 10 minutes; workers may
+legitimately run far longer (up to the configured `timeoutSec`, default 30 min). So launch any
+non-trivial dispatch with the **Bash tool in `run_in_background` mode** and poll for completion.
+Short, trivial dispatches may run in the foreground.
 
 ## Write complete, self-contained assignments
 
@@ -106,25 +109,30 @@ The `session_id` is in the JSON output of the original `run`. A resume still nee
 otherwise the follow-up runs on the role/provider default. You own the final result, not the
 worker.
 
-## Web search: depends on the runner
+## Web search: depends on the provider
 
-**`claude` runner (z.ai, DeepSeek, OpenRouter):** `WebSearch` is a server-side Anthropic tool
-and is **not available on third-party backends**. Do the search yourself and hand the worker
-the **concrete URL(s)** to fetch with `WebFetch`.
+**z.ai:** its Anthropic-compatible endpoint implements the server-side tool
+`web_search_20250305` and routes it internally to its own `web_search_prime` (verified
+2026-09-13 against the raw endpoint and in a `claude -p` transcript). z.ai workers **can** use
+`WebSearch` — put it in the role's `tools` and skip pre-collecting URLs.
+
+**DeepSeek, OpenRouter:** unverified. Assume `WebSearch` is unavailable there until a test
+dispatch proves otherwise, and hand those workers the **concrete URL(s)** to fetch with
+`WebFetch`.
 
 **`opencode` runner:** opencode ships its own client-side `websearch` tool (Exa), so these
-workers *can* search — no URL pre-collection needed. Two catches:
+workers can search too. Two catches:
 
 - The tool is only registered when the provider id is literally `opencode`, or when
   `OPENCODE_ENABLE_EXA=1` is set. **`opencode-go/*` models are a different provider id**, so
   they need that env var. `fleet.mjs` passes the parent env through to the worker, so
   exporting it once is enough. No Exa API key required — it uses the public
   `mcp.exa.ai/mcp` endpoint.
-- Exa is an embedding search, not a Google query. When a specific source is mandatory
-  (a standard, a statute, a vendor page), still pass the URL rather than trusting its ranking.
+- Exa is an embedding search, not a Google query.
 
-Either way, **judging the sources stays with you** — cheap workers do not reliably tell an
-authoritative source from SEO filler.
+**Regardless of provider:** when a specific source is mandatory (a standard, a statute, a vendor
+page), pass the URL rather than trusting the search ranking. And **judging the sources stays
+with you** — cheap workers do not reliably tell an authoritative source from SEO filler.
 
 ## Cost awareness
 
