@@ -22,7 +22,13 @@
       },
       "fallback": "openrouter",
       "rateLimitTz": "+08:00",
-      "maxParallel": 2
+      "maxParallel": 2,
+      "peak": {
+        "tz": "+08:00", "days": [1, 2, 3, 4, 5], "windows": ["14:00-18:00"],
+        "quota": { "glm-5.3": { "offPeak": 1, "peak": 3 }, "glm-5.3-flash": { "offPeak": 0.4, "peak": 1.2 } },
+        "maxParallel": 1,
+        "preferFallback": false
+      }
     },
     "openrouter": {
       "baseUrl": "https://openrouter.ai/api",

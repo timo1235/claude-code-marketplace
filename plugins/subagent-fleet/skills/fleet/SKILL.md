@@ -95,6 +95,14 @@ enforces `maxParallel` per provider (default 2 — a third run waits for a slot)
 too: spread a wave over providers (two on z.ai, one on OpenRouter, …) rather than stacking
 everything on one key, and stagger starts when the packages are large.
 
+## Peak hours
+
+Some flat-rate plans meter quota faster at certain times (z.ai: `glm-5.3` counts 3× Mon–Fri
+14:00–18:00 UTC+8 = 08:00–12:00 German time). `doctor` shows whether a provider's peak is
+**ACTIVE NOW**, and `run` reports `quota_multiplier`. During peak, dispatch fewer strong-tier
+workers to that provider, use the fast tier or another provider for the bulk, or postpone a
+large fan-out — a 3× wave is how a five-hour quota vanishes in twenty minutes.
+
 ## Keep runs short and resumable
 
 A run that dies loses everything since its last write, and the longer it runs the likelier it

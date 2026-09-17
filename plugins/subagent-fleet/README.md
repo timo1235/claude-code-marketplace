@@ -187,6 +187,29 @@ failure, including timeout, so a dead run can always be continued with `--resume
 Runs that die anyway are almost always **too big**. Keep a worker under ~15 minutes / ~40 turns
 and split larger work into sequential packages — a lost run then costs one step, not an hour.
 
+### Peak hours
+
+Flat-rate plans meter **quota**, and some meter it faster at certain times. z.ai's GLM Coding
+Plan counts `glm-5.3` at **3×** during peak hours — **Mon–Fri 14:00–18:00 UTC+8**, i.e.
+08:00–12:00 German time — and 1× otherwise; `glm-5.3-flash` counts 1.2× vs 0.4× (per
+[docs.z.ai](https://docs.z.ai/devpack/notice/usage-revision), September 2026). A provider
+describes that with a `peak` block:
+
+```jsonc
+"peak": {
+  "tz": "+08:00", "days": [1, 2, 3, 4, 5], "windows": ["14:00-18:00"],   // 0 = Sunday
+  "quota": { "glm-5.3": { "offPeak": 1, "peak": 3 }, "glm-5.3-flash": { "offPeak": 0.4, "peak": 1.2 } },
+  "maxParallel": 1,          // tighter slot limit while peak is active (optional)
+  "preferFallback": false    // start runs on provider.fallback during peak (optional)
+}
+```
+
+Effects: `doctor` shows whether peak is active right now; `run` prints a stderr notice, applies
+`peak.maxParallel`, multiplies `cost_usd` by the model's quota factor (so the number tracks what
+the plan actually charges) and reports `quota_multiplier` per attempt and at top level. With
+`preferFallback` a run starts on the fallback provider (e.g. pay-per-use OpenRouter) instead of
+burning 3× quota — whether that trade is worth it is your call, hence off by default.
+
 ## Usage
 
 Most of the time the **`fleet` skill** drives this — it plans, dispatches and reviews for you

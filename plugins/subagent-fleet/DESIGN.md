@@ -160,6 +160,10 @@ Node, no external dependencies. Commands:
     within `rateLimitWaitMaxSec`; `transient` (dropped stream, 5xx, died mid-stream) and
     `empty_response` → resume the same session with a continuation prompt after
     exponential backoff (`retryBackoffSec`); `max_turns` / `timeout` / `error` → no retry;
+  - **peak hours** (`provider.peak`: tz, days, windows, per-model quota factors,
+    optional `maxParallel` / `preferFallback`): z.ai meters `glm-5.3` at 3× Mon–Fri
+    14:00–18:00 UTC+8. `run` reports `quota_multiplier`, scales `cost_usd` by it, applies
+    the peak slot limit and can start on the fallback provider instead;
   - **progress file** (`--progress-file`, default `<task-file>.progress.md`): the preamble
     tells the worker to append `- done: …` per deliverable and to read the file first on
     a resume, so a continued run does not redo finished work;

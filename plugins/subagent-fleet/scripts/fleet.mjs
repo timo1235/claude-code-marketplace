@@ -230,6 +230,32 @@ function validateConfig(config, configPath) {
         2,
       );
     }
+    if (p.peak !== undefined) {
+      const pk = p.peak;
+      if (!pk || typeof pk !== 'object' || !Array.isArray(pk.windows)) {
+        throw new FleetError(
+          `Config ${configPath}: provider "${id}".peak must be an object with a "windows" array.`,
+          2,
+        );
+      }
+      if (pk.tz !== undefined && !/^[+-]\d{2}:\d{2}$/.test(String(pk.tz))) {
+        throw new FleetError(`Config ${configPath}: provider "${id}".peak.tz must be "+HH:MM".`, 2);
+      }
+      for (const w of pk.windows) {
+        if (!parseWindow(w)) {
+          throw new FleetError(
+            `Config ${configPath}: provider "${id}".peak.windows entry "${w}" must be "HH:MM-HH:MM".`,
+            2,
+          );
+        }
+      }
+      if (pk.preferFallback && !p.fallback) {
+        throw new FleetError(
+          `Config ${configPath}: provider "${id}".peak.preferFallback needs a "fallback" provider.`,
+          2,
+        );
+      }
+    }
   }
 
   const roles = config.roles || {};
@@ -372,6 +398,17 @@ async function cmdDoctor(argv) {
       .map(([t, m]) => `${t}=${m}`)
       .join(', ');
     process.stdout.write(`    models:         ${models}\n`);
+    if (p.fallback) process.stdout.write(`    fallback:       ${p.fallback}\n`);
+    if (p.peak) {
+      const active = isPeak(p.peak);
+      const factors = Object.entries(p.peak.quota || {})
+        .map(([m, q]) => `${m}=${active ? q.peak : q.offPeak}×`)
+        .join(', ');
+      process.stdout.write(
+        `    peak:           ${describePeak(p.peak)} — ${active ? 'ACTIVE NOW' : 'off-peak now'}` +
+          `${factors ? `, quota ${factors}` : ''}\n`,
+      );
+    }
   }
 
   process.stdout.write('\nRoles:\n');
@@ -661,10 +698,11 @@ function readTask(flags) {
   throw new FleetError('No task provided. Use --task "<text>", --task-file <path>, or pipe via stdin.', 2);
 }
 
-function computeCost(provider, model, usage) {
+function computeCost(provider, model, usage, at = new Date()) {
   const pricing = provider.pricing?.[model];
+  const quota_multiplier = quotaMultiplier(provider, model, at);
   if (!pricing || typeof pricing.input !== 'number' || typeof pricing.output !== 'number') {
-    return { cost_usd: null, cost_source: 'unavailable' };
+    return { cost_usd: null, cost_source: 'unavailable', quota_multiplier };
   }
   // Assumption: cache-creation tokens are billed at the input rate, and cache-read
   // tokens are also counted at the input rate. Providers differ, but this is a
@@ -675,8 +713,10 @@ function computeCost(provider, model, usage) {
     (usage.cache_creation_input_tokens || 0) +
     (usage.cache_read_input_tokens || 0);
   const output = usage.output_tokens || 0;
-  const cost = (input / 1e6) * pricing.input + (output / 1e6) * pricing.output;
-  return { cost_usd: Math.round(cost * 1e6) / 1e6, cost_source: 'config-pricing' };
+  // On metered plans the peak factor is what the quota actually charges, so it
+  // scales the config-priced figure too.
+  const cost = ((input / 1e6) * pricing.input + (output / 1e6) * pricing.output) * quota_multiplier;
+  return { cost_usd: Math.round(cost * 1e6) / 1e6, cost_source: 'config-pricing', quota_multiplier };
 }
 
 // `opencode run --format json` emits NDJSON events: step_start, text (part.text),
@@ -875,6 +915,63 @@ function sleep(ms) {
 }
 
 // ---------------------------------------------------------------------------
+// Peak hours
+// ---------------------------------------------------------------------------
+
+// Flat-rate plans meter quota, not dollars, and some meter it faster at certain
+// times: z.ai's coding plan counts glm-5.3 at 3× Mon–Fri 14:00–18:00 UTC+8 (08:00–12:00
+// German time) and 1× otherwise. provider.peak describes that:
+//   { "tz": "+08:00", "days": [1,2,3,4,5], "windows": ["14:00-18:00"],
+//     "quota": { "glm-5.3": { "offPeak": 1, "peak": 3 } },
+//     "maxParallel": 1, "preferFallback": false }
+// cost_usd is multiplied by the model's quota factor, maxParallel can be tightened,
+// and preferFallback starts a run on provider.fallback while peak is active.
+function tzOffsetMinutes(tz) {
+  const m = /^([+-])(\d{2}):(\d{2})$/.exec(String(tz || ''));
+  if (!m) return 0;
+  return (m[1] === '-' ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3]));
+}
+
+function parseWindow(win) {
+  const m = /^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/.exec(String(win || '').trim());
+  if (!m) return null;
+  return { from: Number(m[1]) * 60 + Number(m[2]), to: Number(m[3]) * 60 + Number(m[4]) };
+}
+
+// Wall clock of `date` in the provider's timezone: weekday (0 = Sunday) and minute of day.
+function wallClock(date, tz) {
+  const shifted = new Date(date.getTime() + tzOffsetMinutes(tz) * 60000);
+  return { day: shifted.getUTCDay(), minute: shifted.getUTCHours() * 60 + shifted.getUTCMinutes() };
+}
+
+function isPeak(peak, date = new Date()) {
+  if (!peak || !Array.isArray(peak.windows) || peak.windows.length === 0) return false;
+  const days = Array.isArray(peak.days) ? peak.days : [1, 2, 3, 4, 5];
+  const { day, minute } = wallClock(date, peak.tz);
+  if (!days.includes(day)) return false;
+  return peak.windows.some((w) => {
+    const win = parseWindow(w);
+    return win && minute >= win.from && minute < win.to;
+  });
+}
+
+function quotaMultiplier(provider, model, date = new Date()) {
+  const peak = provider?.peak;
+  const q = peak?.quota?.[model];
+  if (!q) return 1;
+  const active = isPeak(peak, date);
+  const v = active ? q.peak : q.offPeak;
+  return typeof v === 'number' && v > 0 ? v : 1;
+}
+
+function describePeak(peak) {
+  if (!peak || !Array.isArray(peak.windows)) return '(none)';
+  const days = Array.isArray(peak.days) ? peak.days : [1, 2, 3, 4, 5];
+  const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  return `${days.map((d) => names[d] ?? d).join(',')} ${peak.windows.join(', ')} (${peak.tz || 'UTC'})`;
+}
+
+// ---------------------------------------------------------------------------
 // Per-provider concurrency slots
 // ---------------------------------------------------------------------------
 
@@ -1052,14 +1149,38 @@ async function cmdRun(argv) {
   const backoffSec = Number(defaults.retryBackoffSec ?? 15);
   const rateLimitWaitMaxSec = Number(defaults.rateLimitWaitMaxSec ?? 0);
 
-  // Concurrency slot on the provider (0 = unlimited).
-  const maxParallelFor = (p) =>
-    flags['max-parallel'] !== undefined
-      ? Number(flags['max-parallel'])
-      : Number(p.maxParallel ?? defaults.maxParallelPerProvider ?? 2);
+  // Concurrency slot on the provider (0 = unlimited); peak hours may tighten it.
+  const maxParallelFor = (p) => {
+    if (flags['max-parallel'] !== undefined) return Number(flags['max-parallel']);
+    if (p.peak && p.peak.maxParallel !== undefined && isPeak(p.peak)) return Number(p.peak.maxParallel);
+    return Number(p.maxParallel ?? defaults.maxParallelPerProvider ?? 2);
+  };
 
   let current = { providerId, provider, model, key, runner };
-  let releaseSlot = await acquireProviderSlot(workerStateDir, providerId, maxParallelFor(provider));
+
+  // Peak hours: say so, and start on the fallback right away if configured to.
+  if (provider.peak && isPeak(provider.peak)) {
+    const factor = quotaMultiplier(provider, model);
+    process.stderr.write(
+      `fleet: peak hours on "${providerId}" (${describePeak(provider.peak)}); ` +
+        `quota counts ${factor}× for ${model}.\n`,
+    );
+    const fbId = provider.fallback;
+    const fb = fbId ? config.providers[fbId] : null;
+    if (provider.peak.preferFallback && fb && runnerOf(fb) === runner) {
+      const fbModel = resolveModel(fb, fallbackTier);
+      if (fbModel) {
+        process.stderr.write(`fleet: preferFallback → starting on "${fbId}" (${fbModel}) instead.\n`);
+        current = { providerId: fbId, provider: fb, model: fbModel, key: keyFor(fbId, fb), runner };
+      }
+    }
+  }
+
+  let releaseSlot = await acquireProviderSlot(
+    workerStateDir,
+    current.providerId,
+    maxParallelFor(current.provider),
+  );
 
   let sessionId =
     flags.resume !== undefined && typeof flags.resume === 'string' ? String(flags.resume) : null;
@@ -1097,7 +1218,7 @@ async function cmdRun(argv) {
     });
     const attemptStart = Date.now();
     const raw = await runWorker(spec.cmd, spec.args, spec.env, cwd, timeoutSec);
-    const a = interpretAttempt(current.runner, raw, current.provider, current.model);
+    const a = interpretAttempt(current.runner, raw, current.provider, current.model, new Date(attemptStart));
     a.duration_ms = Date.now() - attemptStart;
 
     if (a.sessionId) sessionId = a.sessionId;
@@ -1119,6 +1240,8 @@ async function cmdRun(argv) {
       num_turns: a.num_turns,
       duration_ms: a.duration_ms,
       session_id: a.sessionId || sessionId,
+      peak: Boolean(current.provider.peak) && isPeak(current.provider.peak, new Date(attemptStart)),
+      quota_multiplier: a.quota_multiplier,
     });
 
     if (a.ok && !a.error_class) {
@@ -1210,6 +1333,7 @@ async function cmdRun(argv) {
     cost_usd: totalCost == null ? null : Math.round(totalCost * 1e6) / 1e6,
     cost_source: costSource,
     cli_reported_cost_usd: totalCliCost,
+    quota_multiplier: a.quota_multiplier,
     result: a.text ?? null,
     attempts,
     progress_file: progressFile,
@@ -1286,7 +1410,7 @@ function buildWorkerCommand(o) {
 }
 
 // Turn one raw worker run into a uniform attempt record.
-function interpretAttempt(runner, raw, provider, model) {
+function interpretAttempt(runner, raw, provider, model, startedAt = new Date()) {
   const base = {
     ok: false,
     sessionId: null,
@@ -1294,6 +1418,7 @@ function interpretAttempt(runner, raw, provider, model) {
     usage: extractUsage(null),
     cost_usd: null,
     cost_source: 'unavailable',
+    quota_multiplier: quotaMultiplier(provider, model, startedAt),
     cli_cost: null,
     num_turns: null,
     error: null,
@@ -1313,7 +1438,7 @@ function interpretAttempt(runner, raw, provider, model) {
     base.text = parsed.text || null;
     base.usage = parsed.usage;
     base.num_turns = parsed.steps || null;
-    const cost = computeCost(provider, model, parsed.usage);
+    const cost = computeCost(provider, model, parsed.usage, startedAt);
     base.cost_usd = cost.cost_usd;
     base.cost_source = cost.cost_source;
     if (base.cost_usd == null && parsed.cost != null) {
@@ -1377,7 +1502,7 @@ function interpretAttempt(runner, raw, provider, model) {
   }
   const r = parsed.result;
   base.usage = extractUsage(r);
-  const cost = computeCost(provider, model, base.usage);
+  const cost = computeCost(provider, model, base.usage, startedAt);
   base.cost_usd = cost.cost_usd;
   base.cost_source = cost.cost_source;
   base.cli_cost = r.total_cost_usd ?? null;
@@ -1523,6 +1648,13 @@ Failure handling:
   otherwise the run fails with retry_after_sec/reset_at (set provider.rateLimitTz, e.g.
   "+08:00" for z.ai, so the reset wall clock can be interpreted). The output lists every
   attempt; session_id is reported even on timeout so the run can be resumed by hand.
+
+Peak hours:
+  provider.peak = { tz, days, windows, quota: { <model>: { offPeak, peak } }, maxParallel,
+  preferFallback } marks times when a metered plan counts quota faster (z.ai: glm-5.3 3×
+  Mon–Fri 14:00–18:00 UTC+8). run reports quota_multiplier, scales cost_usd by it, applies
+  peak.maxParallel and, with preferFallback, starts on provider.fallback instead. doctor
+  shows whether peak is active now.
 
 Runners:
   Each provider runs on a runner: "claude" (default; headless claude -p against an
