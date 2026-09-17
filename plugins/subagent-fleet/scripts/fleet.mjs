@@ -704,18 +704,23 @@ function computeCost(provider, model, usage, at = new Date()) {
   if (!pricing || typeof pricing.input !== 'number' || typeof pricing.output !== 'number') {
     return { cost_usd: null, cost_source: 'unavailable', quota_multiplier };
   }
-  // Assumption: cache-creation tokens are billed at the input rate, and cache-read
-  // tokens are also counted at the input rate. Providers differ, but this is a
-  // reasonable upper-bound estimate; the CLI's own figure is Anthropic-priced and
-  // wrong for foreign models, so we prefer this config-based number.
-  const input =
-    (usage.input_tokens || 0) +
-    (usage.cache_creation_input_tokens || 0) +
-    (usage.cache_read_input_tokens || 0);
-  const output = usage.output_tokens || 0;
+  // Cache-read tokens dominate long worker runs (5–8M per work package) and most
+  // providers bill them at a fraction of the input rate (OpenRouter/Z.AI: 0.26 vs
+  // 1.40 $/M for glm-5.3). Use pricing.cacheRead / pricing.cacheWrite when given;
+  // without them fall back to the input rate as an upper bound. The CLI's own
+  // figure is Anthropic-priced and wrong for foreign models either way.
+  const rate = (v, fallback) => (typeof v === 'number' ? v : fallback);
+  const cacheReadRate = rate(pricing.cacheRead, pricing.input);
+  const cacheWriteRate = rate(pricing.cacheWrite, pricing.input);
+  const perM = (n) => (n || 0) / 1e6;
   // On metered plans the peak factor is what the quota actually charges, so it
   // scales the config-priced figure too.
-  const cost = ((input / 1e6) * pricing.input + (output / 1e6) * pricing.output) * quota_multiplier;
+  const cost =
+    (perM(usage.input_tokens) * pricing.input +
+      perM(usage.cache_read_input_tokens) * cacheReadRate +
+      perM(usage.cache_creation_input_tokens) * cacheWriteRate +
+      perM(usage.output_tokens) * pricing.output) *
+    quota_multiplier;
   return { cost_usd: Math.round(cost * 1e6) / 1e6, cost_source: 'config-pricing', quota_multiplier };
 }
 

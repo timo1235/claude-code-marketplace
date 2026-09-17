@@ -73,8 +73,10 @@ settings inside a worker.) opencode workers run with `--pure` (no external openc
       // optional: price per 1M tokens in USD → fleet.mjs computes cost itself.
       // Without it, run output has cost_usd: null — you fly blind on spend.
       // Skip it only on flat-rate plans, where a per-token number would mislead.
+      // cacheRead / cacheWrite are optional; missing, both default to the input rate
+      // (an upper bound — cache reads dominate long runs and are usually ~1/5 of input).
       "pricing": {
-        "deepseek-v4-pro":   { "input": 1.74, "output": 3.48 },
+        "deepseek-v4-pro":   { "input": 1.74, "output": 3.48, "cacheRead": 0.17 },
         "deepseek-v4-flash": { "input": 0.14, "output": 0.28 }
       }
     },
@@ -248,7 +250,8 @@ delta) rather than a fresh worker.
   denied permissions and set it on the role (`"agent": "..."`).
 - **Cost accounting is our own.** The CLI's `total_cost_usd` is computed with Anthropic prices
   and is **unreliable for third-party models**, so fleet.mjs uses the config's `pricing` field
-  to compute cost instead. Configure `pricing` if you want accurate numbers. On the opencode
+  to compute cost instead. Configure `pricing` (with `cacheRead`, since cache reads are the
+  bulk of a long run's tokens) if you want accurate numbers. On the opencode
   runner, opencode's own per-token cost figure is used as a fallback (`cost_source:
   "opencode-reported"`) — on flat-rate plans like OpenCode Go that number is notional, not
   billed.
