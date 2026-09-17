@@ -14,26 +14,28 @@
     "zai": {
       "baseUrl": "https://api.z.ai/api/anthropic",
       "apiKeyEnv": "ZAI_API_KEY",
-      "smallFastModel": "glm-4.5-flash",
-      "models": { "strong": "glm-5.2", "default": "glm-5.2", "fast": "glm-4.5-air" },
+      "smallFastModel": "glm-5.3-flash",
+      "models": { "strong": "glm-5.3", "default": "glm-5.3", "fast": "glm-5.3-flash" },
       "pricing": {
-        "glm-5.2":       { "input": 1.4, "output": 4.4 },
-        "glm-4.5-air":   { "input": 0.2, "output": 1.1 },
-        "glm-4.5-flash": { "input": 0, "output": 0 }
-      }
+        "glm-5.3":       { "input": 1.4, "output": 4.4 },
+        "glm-5.3-flash": { "input": 0.15, "output": 0.5 }
+      },
+      "fallback": "openrouter",
+      "rateLimitTz": "+08:00",
+      "maxParallel": 2
     },
     "openrouter": {
       "baseUrl": "https://openrouter.ai/api",
       "apiKeyEnv": "OPENROUTER_API_KEY",
-      "smallFastModel": "z-ai/glm-4.6",
-      "models": { "strong": "deepseek/deepseek-v4", "default": "z-ai/glm-4.6", "fast": "z-ai/glm-4.6" }
+      "smallFastModel": "z-ai/glm-5.3-flash",
+      "models": { "strong": "z-ai/glm-5.3", "default": "z-ai/glm-5.3-flash", "fast": "z-ai/glm-5.3-flash" }
     },
     "opencode": {
       "runner": "opencode",
       "models": {
-        "strong": "opencode-go/glm-5.2",
-        "default": "opencode-go/qwen3.7-plus",
-        "fast": "opencode-go/qwen3.6-plus"
+        "strong": "opencode-go/glm-5.3",
+        "default": "opencode-go/glm-5.3",
+        "fast": "opencode-go/glm-5.3-flash"
       }
     }
   },
@@ -42,5 +44,9 @@
     "researcher": { "provider": "zai",      "model": "fast",   "tools": "Read,Grep,Glob,WebSearch,WebFetch" },
     "grunt":      { "provider": "deepseek", "model": "fast",   "tools": "Read,Edit,Write,Grep,Glob" }
   },
-  "defaults": { "permissionMode": "acceptEdits", "maxTurns": 40, "timeoutSec": 1800, "workerStateDir": "~/.local/state/subagent-fleet" }
+  "defaults": {
+    "permissionMode": "acceptEdits", "maxTurns": 40, "timeoutSec": 1800,
+    "workerStateDir": "~/.local/state/subagent-fleet",
+    "maxParallelPerProvider": 2, "maxRetries": 3, "retryBackoffSec": 15, "rateLimitWaitMaxSec": 0
+  }
 }

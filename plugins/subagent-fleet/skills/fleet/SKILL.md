@@ -89,6 +89,39 @@ Run multiple workers in parallel **only on disjoint files**. If assignments touc
 files, either run them **sequentially**, or give each worker a **separate git worktree** as its
 `--cwd` so their edits can't collide. Then integrate.
 
+Parallel workers on one provider **share that provider's quota**. Four strong-tier coders on
+one z.ai key drained a full five-hour window in twenty minutes and died mid-file. `fleet.mjs`
+enforces `maxParallel` per provider (default 2 — a third run waits for a slot), but plan for it
+too: spread a wave over providers (two on z.ai, one on OpenRouter, …) rather than stacking
+everything on one key, and stagger starts when the packages are large.
+
+## Keep runs short and resumable
+
+A run that dies loses everything since its last write, and the longer it runs the likelier it
+dies. Size assignments so a worker finishes in **under ~15 minutes / ~40 turns**; split bigger
+work into sequential packages instead of one 40-minute run. Always dispatch with
+`--task-file` — that also gives the worker a **progress file** (`<task-file>.progress.md`) it
+checkpoints each deliverable into, so a resume picks up where it stopped instead of guessing.
+Tell the worker to write each file as soon as it is designed, not at the end.
+
+## When a run fails
+
+Read `error_class` in the output before doing anything:
+
+- `rate_limit` — the quota is gone. `fleet.mjs` already tried the provider's `fallback`; if it
+  still failed, `retry_after_sec` / `reset_at` tell you when. Do **not** hammer the same
+  provider again — resume on another provider or wait.
+- `transient` / `empty_response` — the automatic retries (`maxRetries`, default 3) were
+  exhausted. Resume the session once more by hand (`--resume <session_id>`); if it dies again,
+  the package is too big — split it.
+- `timeout` — the run exceeded `timeoutSec`. `session_id` is still reported: resume it with a
+  smaller remaining scope, or pass `--timeout` if the package genuinely needs longer.
+- `max_turns` — the turn budget was the point; review what exists before granting more.
+- `error` — read `error` / `stderr` / `diagnostics`; this is not a retry case.
+
+Never restart a dead worker from scratch while its `session_id` is known — a resume keeps the
+full context and the progress file tells it what is done.
+
 ## Reviewing — mandatory, not optional
 
 Worker output is a **proposal**, not a finished result. After every delegation:

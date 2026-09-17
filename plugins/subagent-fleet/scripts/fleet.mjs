@@ -14,6 +14,44 @@ const WORKER_PREAMBLE =
   'Answer concisely: what was done, which files changed, what was verified, what remains open. ' +
   'Your edits will be reviewed by the orchestrator.';
 
+// Context discipline. Worker runs that re-read large files in full burn through
+// provider quotas (observed: 8M cache-read tokens for one work package) and are
+// the runs most likely to die mid-way, so keep reads bounded and never repeated.
+const WORKER_READ_RULES =
+  'Keep your context small: never read a file larger than ~30 KB in one call — use ' +
+  'offset/limit or Grep for the part you need. Do not re-read a file you already have in ' +
+  'context unless you edited it since. Write each deliverable to disk as soon as it is ' +
+  'designed instead of accumulating everything for the end.';
+
+// Checkpointing. With a progress file, a resumed run (after a dropped stream, a
+// quota hit or a timeout) knows what is already done instead of guessing.
+function progressRules(progressFile) {
+  if (!progressFile) return '';
+  return (
+    ` Progress file: ${progressFile}. Before you start, read it if it exists and skip every ` +
+    'deliverable it lists as done. After you finish each deliverable (a file written, a test ' +
+    'passing, an integration edit made), append one line "- done: <what>" to it — create the ' +
+    'file if missing. Never rewrite or delete existing lines.'
+  );
+}
+
+function buildPreamble(progressFile) {
+  return WORKER_PREAMBLE + ' ' + WORKER_READ_RULES + progressRules(progressFile);
+}
+
+// Prompt for an automatic continuation of an interrupted session.
+function continuationPrompt(reason, progressFile) {
+  let text =
+    `Your previous turn was interrupted (${reason}); nothing you wrote to disk was lost. ` +
+    'Continue exactly where you stopped with the same task and rules. Do not redo finished ' +
+    'work and do not re-read files you already read unless you need to edit them.';
+  if (progressFile) {
+    text += ` Read the progress file ${progressFile} first to see what is already done.`;
+  }
+  text += ' End with the report the task asks for.';
+  return text;
+}
+
 const AUTH_ENV_VARS = [
   'ANTHROPIC_API_KEY',
   'ANTHROPIC_AUTH_TOKEN',
@@ -162,6 +200,35 @@ function validateConfig(config, configPath) {
     }
     if (!p.models || typeof p.models !== 'object') {
       throw new FleetError(`Config ${configPath}: provider "${id}" is missing "models".`, 2);
+    }
+    // A quota fallback continues the *same session* on another provider, which only
+    // works within one runner (the claude runner's transcript is local; opencode's
+    // sessions live in its own db).
+    if (p.fallback !== undefined) {
+      const fb = providers[p.fallback];
+      if (!fb) {
+        throw new FleetError(
+          `Config ${configPath}: provider "${id}" has unknown fallback "${p.fallback}".`,
+          2,
+        );
+      }
+      if (p.fallback === id) {
+        throw new FleetError(`Config ${configPath}: provider "${id}" cannot be its own fallback.`, 2);
+      }
+      if (runnerOf(fb) !== runner) {
+        throw new FleetError(
+          `Config ${configPath}: provider "${id}" (runner ${runner}) has fallback "${p.fallback}" ` +
+            `on runner ${runnerOf(fb)}; a fallback must use the same runner.`,
+          2,
+        );
+      }
+    }
+    if (p.rateLimitTz !== undefined && !/^[+-]\d{2}:\d{2}$/.test(String(p.rateLimitTz))) {
+      throw new FleetError(
+        `Config ${configPath}: provider "${id}" has invalid rateLimitTz "${p.rateLimitTz}" ` +
+          `(expected "+HH:MM" or "-HH:MM").`,
+        2,
+      );
     }
   }
 
@@ -660,6 +727,15 @@ function parseOpencodeOutput(stdout) {
     }
   }
 
+  // What the worker did last — the only clue when opencode exits 1 without an
+  // error event.
+  const lastEvents = events.slice(-8).map((ev) => {
+    const part = ev.part || {};
+    if (ev.type === 'tool') return `tool:${part.tool || part.name || '?'}`;
+    if (ev.type === 'text') return `text:${truncate(String(part.text || '').trim(), 80)}`;
+    return String(ev.type || '?');
+  });
+
   return {
     parsedAny: events.length > 0,
     sessionId,
@@ -668,6 +744,7 @@ function parseOpencodeOutput(stdout) {
     cost: hasCost ? cost : null,
     steps,
     errors,
+    lastEvents,
   };
 }
 
@@ -679,6 +756,191 @@ function extractUsage(cliJson) {
     cache_read_input_tokens: u.cache_read_input_tokens || 0,
     cache_creation_input_tokens: u.cache_creation_input_tokens || 0,
   };
+}
+
+function addUsage(total, part) {
+  for (const k of Object.keys(total)) total[k] += part?.[k] || 0;
+  return total;
+}
+
+// `claude -p --output-format stream-json --verbose` emits NDJSON: a system/init event
+// (carries the session_id from the very first line), assistant/user events per turn,
+// and one final {"type":"result",...} object with the same shape the plain json output
+// has. Reading the stream instead of the final object means a killed worker still
+// reports its session_id — the one thing needed to resume it.
+function parseClaudeStream(stdout) {
+  let sessionId = null;
+  let result = null;
+  let lastAssistantText = null;
+  let parsedAny = false;
+  for (const line of String(stdout).split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed[0] !== '{') continue;
+    let ev;
+    try {
+      ev = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+    parsedAny = true;
+    if (!sessionId && ev.session_id) sessionId = ev.session_id;
+    if (ev.type === 'result') result = ev;
+    if (ev.type === 'assistant') {
+      const texts = (ev.message?.content || [])
+        .filter((c) => c.type === 'text' && c.text)
+        .map((c) => c.text);
+      if (texts.length) lastAssistantText = texts.join('\n');
+    }
+  }
+  // Plain `--output-format json` (a single object) still parses as a result.
+  if (!result && parsedAny) {
+    try {
+      const j = JSON.parse(String(stdout).trim());
+      if (j && typeof j === 'object' && 'is_error' in j) {
+        result = j;
+        sessionId = sessionId || j.session_id || null;
+      }
+    } catch {}
+  }
+  return { parsedAny, sessionId, result, lastAssistantText };
+}
+
+// ---------------------------------------------------------------------------
+// Failure classification + retry policy
+// ---------------------------------------------------------------------------
+
+// Classes the retry loop acts on:
+//   rate_limit     — provider quota / 429; switch to the fallback provider or wait.
+//   transient      — dropped stream, network hiccup, 5xx; resume the same session.
+//   empty_response — the model returned nothing (observed as "No response requested.");
+//                    resume the same session with a nudge.
+//   max_turns      — the worker used up --max-turns; not retried (the budget was the point).
+//   timeout        — hard timeoutSec hit; not retried, but session_id is reported.
+//   error          — anything else; not retried.
+const RETRIABLE_CLASSES = new Set(['rate_limit', 'transient', 'empty_response']);
+
+function classifyFailure({ text, timedOut, subtype, apiErrorStatus, exitCode, ok }) {
+  if (timedOut) return 'timeout';
+  const t = String(text || '');
+  if (ok && (!t.trim() || /^No response requested\.?$/i.test(t.trim()))) return 'empty_response';
+  if (ok) return null;
+  if (subtype === 'error_max_turns') return 'max_turns';
+  if (
+    apiErrorStatus === 429 ||
+    /\b429\b|rate.?limit|usage limit|quota|too many requests|insufficient.?balance/i.test(t)
+  ) {
+    return 'rate_limit';
+  }
+  if (
+    apiErrorStatus === 500 ||
+    apiErrorStatus === 502 ||
+    apiErrorStatus === 503 ||
+    apiErrorStatus === 504 ||
+    apiErrorStatus === 529 ||
+    /stream closed|connection (error|reset|refused|closed)|ECONN|ETIMEDOUT|EPIPE|socket hang up|fetch failed|network|\b50[234]\b|\b529\b|overloaded|internal server error|terminated|aborted/i.test(
+      t,
+    )
+  ) {
+    return 'transient';
+  }
+  if (!t.trim() && exitCode !== 0) return 'transient';
+  return 'error';
+}
+
+// Providers phrase reset times differently; two shapes are known:
+//   z.ai:      "...Your limit will reset at 2026-09-17 06:46:37]..." (wall clock in the
+//              provider's timezone — configure provider.rateLimitTz, e.g. "+08:00")
+//   Anthropic: rate_limit_event with resetsAt (unix seconds) in the stream
+// Returns { reset_at (ISO) , retry_after_sec } or nulls when nothing parseable is found.
+function parseRateLimitReset(text, provider, now = Date.now()) {
+  const m = String(text || '').match(/reset(?:s)? at (\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})/i);
+  if (!m) return { reset_at: null, retry_after_sec: null, reset_at_raw: null };
+  const raw = `${m[1]} ${m[2]}`;
+  const tz = provider?.rateLimitTz;
+  if (!tz || !/^[+-]\d{2}:\d{2}$/.test(tz)) {
+    // Without a timezone the wall clock is ambiguous — report it, don't compute.
+    return { reset_at: null, retry_after_sec: null, reset_at_raw: raw };
+  }
+  const resetMs = Date.parse(`${m[1]}T${m[2]}${tz}`);
+  if (Number.isNaN(resetMs)) return { reset_at: null, retry_after_sec: null, reset_at_raw: raw };
+  return {
+    reset_at: new Date(resetMs).toISOString(),
+    retry_after_sec: Math.max(0, Math.ceil((resetMs - now) / 1000)),
+    reset_at_raw: raw,
+  };
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// ---------------------------------------------------------------------------
+// Per-provider concurrency slots
+// ---------------------------------------------------------------------------
+
+// Parallel workers on one provider key share one quota. Four glm-5.3 coders drained a
+// full five-hour z.ai window in twenty minutes, killing two of them mid-file. Every
+// `run` therefore takes a slot under <stateDir>/slots/<provider>/ and waits while the
+// provider is at capacity. Slots are pid files; a dead pid is a stale slot.
+function slotsDir(stateDir, providerId) {
+  const base = stateDir || DEFAULT_WORKER_STATE_DIR;
+  return path.join(base, 'slots', providerId.replace(/[^\w.-]/g, '_'));
+}
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
+
+function liveSlots(dir) {
+  let names = [];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return 0;
+  }
+  let live = 0;
+  for (const name of names) {
+    const pid = Number(name.replace(/\.lock$/, ''));
+    if (Number.isInteger(pid) && pidAlive(pid)) live++;
+    else {
+      try {
+        fs.unlinkSync(path.join(dir, name));
+      } catch {}
+    }
+  }
+  return live;
+}
+
+async function acquireProviderSlot(stateDir, providerId, maxParallel) {
+  if (!maxParallel || maxParallel <= 0) return null;
+  const dir = slotsDir(stateDir, providerId);
+  fs.mkdirSync(dir, { recursive: true });
+  const mine = path.join(dir, `${process.pid}.lock`);
+  let announced = false;
+  for (;;) {
+    if (liveSlots(dir) < maxParallel) {
+      fs.writeFileSync(mine, String(Date.now()));
+      const release = () => {
+        try {
+          fs.unlinkSync(mine);
+        } catch {}
+      };
+      process.on('exit', release);
+      return release;
+    }
+    if (!announced) {
+      process.stderr.write(
+        `fleet: provider "${providerId}" is at its parallel limit (${maxParallel}); waiting for a slot…\n`,
+      );
+      announced = true;
+    }
+    await sleep(5000);
+  }
 }
 
 async function cmdRun(argv) {
@@ -715,22 +977,27 @@ async function cmdRun(argv) {
       2,
     );
   }
+  // The tier a fallback provider resolves the model with: the explicit/role tier if
+  // there is one, otherwise "default" (a literal id is meaningless on another provider).
+  const fallbackTier = TIERS.includes(modelSpec) ? modelSpec : 'default';
 
   const runner = runnerOf(provider);
   const workerStateDir = resolveWorkerStateDir(config);
 
   // Key — only the claude runner needs one; opencode authenticates itself.
-  let key = null;
-  if (runner === 'claude') {
-    key = lookupKey(provider.apiKeyEnv, envFileValues);
-    if (!key) {
+  const keyFor = (pid, p) => {
+    if (runnerOf(p) !== 'claude') return null;
+    const k = lookupKey(p.apiKeyEnv, envFileValues);
+    if (!k) {
       throw new FleetError(
-        `API key not set for provider "${providerId}". Set env var ${provider.apiKeyEnv}, ` +
+        `API key not set for provider "${pid}". Set env var ${p.apiKeyEnv}, ` +
           `or add it to the configured envFile.`,
         2,
       );
     }
-  }
+    return k;
+  };
+  const key = keyFor(providerId, provider);
 
   const task = readTask(flags);
 
@@ -765,185 +1032,370 @@ async function cmdRun(argv) {
 
   const settingSources = defaults.settingSources !== undefined ? String(defaults.settingSources) : '';
 
-  let cmd;
-  let args;
-  let env;
-  if (runner === 'opencode') {
+  const agentName =
+    (flags.agent !== undefined && typeof flags.agent === 'string' && flags.agent) || role?.agent;
+
+  // Progress file: explicit --progress-file, else derived from --task-file
+  // (.fleet/w5.txt → .fleet/w5.progress.md). "" or "none" disables it.
+  let progressFile = null;
+  if (flags['progress-file'] !== undefined) {
+    const v = flags['progress-file'];
+    if (typeof v === 'string' && v !== '' && v !== 'none') progressFile = path.resolve(expandHome(v));
+  } else if (flags['task-file'] !== undefined) {
+    const tf = path.resolve(expandHome(String(flags['task-file'])));
+    progressFile = tf.replace(/\.[^./\\]+$/, '') + '.progress.md';
+  }
+
+  // Retry policy.
+  const maxRetries =
+    flags.retries !== undefined ? Number(flags.retries) : Number(defaults.maxRetries ?? 3);
+  const backoffSec = Number(defaults.retryBackoffSec ?? 15);
+  const rateLimitWaitMaxSec = Number(defaults.rateLimitWaitMaxSec ?? 0);
+
+  // Concurrency slot on the provider (0 = unlimited).
+  const maxParallelFor = (p) =>
+    flags['max-parallel'] !== undefined
+      ? Number(flags['max-parallel'])
+      : Number(p.maxParallel ?? defaults.maxParallelPerProvider ?? 2);
+
+  let current = { providerId, provider, model, key, runner };
+  let releaseSlot = await acquireProviderSlot(workerStateDir, providerId, maxParallelFor(provider));
+
+  let sessionId =
+    flags.resume !== undefined && typeof flags.resume === 'string' ? String(flags.resume) : null;
+  let isResume = sessionId !== null;
+  let prompt = task;
+
+  const attempts = [];
+  const totalUsage = {
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_input_tokens: 0,
+    cache_creation_input_tokens: 0,
+  };
+  let totalCost = null;
+  let costSource = 'unavailable';
+  let totalCliCost = null;
+  let totalTurns = 0;
+  const started = Date.now();
+
+  let final = null;
+  for (let attempt = 1; ; attempt++) {
+    const spec = buildWorkerCommand({
+      ...current,
+      prompt,
+      isResume,
+      sessionId,
+      tools,
+      permissionMode,
+      maxTurns,
+      settingSources,
+      cwd,
+      workerStateDir,
+      agentName,
+      progressFile,
+    });
+    const attemptStart = Date.now();
+    const raw = await runWorker(spec.cmd, spec.args, spec.env, cwd, timeoutSec);
+    const a = interpretAttempt(current.runner, raw, current.provider, current.model);
+    a.duration_ms = Date.now() - attemptStart;
+
+    if (a.sessionId) sessionId = a.sessionId;
+    addUsage(totalUsage, a.usage);
+    if (a.cost_usd != null) {
+      totalCost = (totalCost || 0) + a.cost_usd;
+      costSource = a.cost_source;
+    }
+    if (a.cli_cost != null) totalCliCost = (totalCliCost || 0) + a.cli_cost;
+    if (a.num_turns) totalTurns += a.num_turns;
+
+    attempts.push({
+      attempt,
+      provider: current.providerId,
+      model: current.model,
+      ok: a.ok && !a.error_class,
+      error_class: a.error_class || null,
+      error: a.error ? truncate(a.error, 300) : null,
+      num_turns: a.num_turns,
+      duration_ms: a.duration_ms,
+      session_id: a.sessionId || sessionId,
+    });
+
+    if (a.ok && !a.error_class) {
+      final = { ok: true, attempt: a };
+      break;
+    }
+
+    const rateInfo =
+      a.error_class === 'rate_limit' ? parseRateLimitReset(a.error, current.provider) : null;
+    const retriable = RETRIABLE_CLASSES.has(a.error_class) && attempt <= maxRetries;
+    if (!retriable) {
+      final = { ok: false, attempt: a, rateInfo };
+      break;
+    }
+
+    // Decide how to continue.
+    let reason;
+    if (a.error_class === 'rate_limit') {
+      const fbId = current.provider.fallback;
+      const fb = fbId ? config.providers[fbId] : null;
+      const fbModel = fb ? resolveModel(fb, fallbackTier) : null;
+      let fbKey = null;
+      let fbUsable = Boolean(fb) && fbId !== current.providerId && runnerOf(fb) === current.runner && fbModel;
+      if (fbUsable) {
+        try {
+          fbKey = keyFor(fbId, fb);
+        } catch (e) {
+          process.stderr.write(`fleet: fallback provider "${fbId}" unusable: ${e.message}\n`);
+          fbUsable = false;
+        }
+      }
+      if (fbUsable) {
+        process.stderr.write(
+          `fleet: attempt ${attempt} on "${current.providerId}" hit its quota; ` +
+            `continuing session on fallback provider "${fbId}" (${fbModel}).\n`,
+        );
+        if (releaseSlot) releaseSlot();
+        current = { providerId: fbId, provider: fb, model: fbModel, key: fbKey, runner: current.runner };
+        releaseSlot = await acquireProviderSlot(workerStateDir, fbId, maxParallelFor(fb));
+        reason = 'the provider quota was exhausted; you are now served by another provider';
+      } else if (
+        rateInfo.retry_after_sec != null &&
+        rateInfo.retry_after_sec <= rateLimitWaitMaxSec
+      ) {
+        process.stderr.write(
+          `fleet: quota exhausted on "${current.providerId}"; waiting ${rateInfo.retry_after_sec}s ` +
+            `until ${rateInfo.reset_at} before resuming.\n`,
+        );
+        await sleep(rateInfo.retry_after_sec * 1000 + 5000);
+        reason = 'the provider quota was exhausted and has now reset';
+      } else {
+        final = { ok: false, attempt: a, rateInfo };
+        break;
+      }
+    } else {
+      const waitSec = backoffSec * 2 ** (attempt - 1);
+      process.stderr.write(
+        `fleet: attempt ${attempt} failed (${a.error_class}: ${truncate(a.error, 120)}); ` +
+          `retrying in ${waitSec}s${sessionId ? ` by resuming session ${sessionId}` : ''}.\n`,
+      );
+      await sleep(waitSec * 1000);
+      reason =
+        a.error_class === 'empty_response'
+          ? 'your last turn produced no output'
+          : 'a transport error cut the connection';
+    }
+
+    if (sessionId) {
+      isResume = true;
+      prompt = continuationPrompt(reason, progressFile);
+    } else {
+      isResume = false;
+      prompt = task;
+    }
+  }
+
+  if (releaseSlot) releaseSlot();
+
+  const a = final.attempt;
+  const out = {
+    ok: final.ok,
+    provider: current.providerId,
+    model: current.model,
+    role: roleName,
+    session_id: sessionId,
+    num_turns: totalTurns || null,
+    duration_ms: Date.now() - started,
+    usage: totalUsage,
+    cost_usd: totalCost == null ? null : Math.round(totalCost * 1e6) / 1e6,
+    cost_source: costSource,
+    cli_reported_cost_usd: totalCliCost,
+    result: a.text ?? null,
+    attempts,
+    progress_file: progressFile,
+  };
+  if (!final.ok) {
+    out.error = a.error || `worker exited with code ${a.exitCode}`;
+    out.error_class = a.error_class;
+    if (final.rateInfo) {
+      out.retry_after_sec = final.rateInfo.retry_after_sec;
+      out.reset_at = final.rateInfo.reset_at || final.rateInfo.reset_at_raw;
+    }
+    out.stderr = truncate(a.stderr, 2000);
+    if (a.diagnostics) out.diagnostics = a.diagnostics;
+    emitRun(out, format);
+    process.exit(a.error_class === 'timeout' ? 3 : a.exitCode || 1);
+  }
+  emitRun(out, format);
+}
+
+// Assemble the worker command line for one attempt.
+function buildWorkerCommand(o) {
+  const preamble = buildPreamble(o.progressFile);
+  if (o.runner === 'opencode') {
     // opencode has no --allowedTools; tool restrictions live in opencode agent
     // configs (role "agent" → --agent). Warn instead of silently ignoring.
-    if (tools) {
+    if (o.tools && !o.isResume) {
       process.stderr.write(
-        `Warning: "tools" is ignored for opencode runner (provider "${providerId}"). ` +
+        `Warning: "tools" is ignored for opencode runner (provider "${o.providerId}"). ` +
           `Restrict tools via an opencode agent and the role's "agent" field.\n`,
       );
     }
-    cmd = 'opencode';
     // --dir pins the worker's working directory: opencode resolves it from the
     // environment (PWD), not from the child process cwd, so cwd alone is ignored.
-    args = ['run', '--model', model, '--format', 'json', '--pure', '--dir', cwd];
+    const args = ['run', '--model', o.model, '--format', 'json', '--pure', '--dir', o.cwd];
     // Headless workers cannot answer permission prompts. acceptEdits/
     // bypassPermissions map to opencode's --auto; anything else runs with
     // opencode's default permissions (read-mostly tasks).
-    if (permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions') {
+    if (o.permissionMode === 'acceptEdits' || o.permissionMode === 'bypassPermissions') {
       args.push('--auto');
     }
-    const agentName =
-      (flags.agent !== undefined && typeof flags.agent === 'string' && flags.agent) ||
-      role?.agent;
-    if (agentName) args.push('--agent', String(agentName));
-    if (flags.resume !== undefined && typeof flags.resume === 'string') {
-      args.push('--session', String(flags.resume));
-    }
+    if (o.agentName) args.push('--agent', String(o.agentName));
+    if (o.isResume && o.sessionId) args.push('--session', o.sessionId);
     // No --append-system-prompt equivalent → preamble goes into the message.
-    args.push(WORKER_PREAMBLE + '\n\n' + task);
-    env = applyWorkerStateDir({ ...process.env, PWD: cwd }, workerStateDir, 'opencode');
-  } else {
-    cmd = 'claude';
-    env = buildWorkerEnv(provider, key, workerStateDir);
-    args = [
-      '-p',
-      task,
-      '--output-format',
-      'json',
-      '--model',
-      model,
-      '--allowedTools',
-      tools,
-      '--permission-mode',
-      permissionMode,
-      '--max-turns',
-      String(maxTurns),
-      '--setting-sources',
-      settingSources,
-      '--strict-mcp-config',
-      '--append-system-prompt',
-      WORKER_PREAMBLE,
-    ];
-    if (flags.resume !== undefined && typeof flags.resume === 'string') {
-      args.push('--resume', String(flags.resume));
-    }
+    args.push(preamble + '\n\n' + o.prompt);
+    const env = applyWorkerStateDir({ ...process.env, PWD: o.cwd }, o.workerStateDir, 'opencode');
+    return { cmd: 'opencode', args, env };
   }
 
-  const started = Date.now();
-  const result = await runWorker(cmd, args, env, cwd, timeoutSec);
-  const duration_ms = Date.now() - started;
+  const env = buildWorkerEnv(o.provider, o.key, o.workerStateDir);
+  // stream-json so the session_id is known from the first line — a worker killed
+  // by the timeout or a dropped connection is otherwise unresumable.
+  const args = [
+    '-p',
+    o.prompt,
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--model',
+    o.model,
+    '--allowedTools',
+    o.tools,
+    '--permission-mode',
+    o.permissionMode,
+    '--max-turns',
+    String(o.maxTurns),
+    '--setting-sources',
+    o.settingSources,
+    '--strict-mcp-config',
+    '--append-system-prompt',
+    preamble,
+  ];
+  if (o.isResume && o.sessionId) args.push('--resume', o.sessionId);
+  return { cmd: 'claude', args, env };
+}
 
-  const base = { provider: providerId, model, role: roleName };
+// Turn one raw worker run into a uniform attempt record.
+function interpretAttempt(runner, raw, provider, model) {
+  const base = {
+    ok: false,
+    sessionId: null,
+    text: null,
+    usage: extractUsage(null),
+    cost_usd: null,
+    cost_source: 'unavailable',
+    cli_cost: null,
+    num_turns: null,
+    error: null,
+    error_class: null,
+    exitCode: raw.code,
+    stderr: raw.stderr,
+    diagnostics: null,
+  };
 
-  // Timeout.
-  if (result.timedOut) {
-    emitError(
-      { ...base, ok: false, error: 'timeout', duration_ms, stderr: truncate(result.stderr, 2000) },
-      format,
-      3,
-    );
-    return;
-  }
-
-  // Spawn error (e.g. claude not found).
-  if (result.spawnError) {
-    emitError(
-      { ...base, ok: false, error: result.spawnError, duration_ms, stderr: '' },
-      format,
-      1,
-    );
-    return;
+  if (raw.spawnError) {
+    return { ...base, error: raw.spawnError, error_class: 'error', exitCode: 1 };
   }
 
   if (runner === 'opencode') {
-    const parsed = parseOpencodeOutput(result.stdout);
+    const parsed = parseOpencodeOutput(raw.stdout);
+    base.sessionId = parsed.sessionId;
+    base.text = parsed.text || null;
+    base.usage = parsed.usage;
+    base.num_turns = parsed.steps || null;
+    const cost = computeCost(provider, model, parsed.usage);
+    base.cost_usd = cost.cost_usd;
+    base.cost_source = cost.cost_source;
+    if (base.cost_usd == null && parsed.cost != null) {
+      base.cost_usd = Math.round(parsed.cost * 1e6) / 1e6;
+      base.cost_source = 'opencode-reported';
+    }
+    base.cli_cost = parsed.cost;
+    if (raw.timedOut) {
+      return { ...base, error: 'timeout', error_class: 'timeout', exitCode: 3 };
+    }
     if (!parsed.parsedAny) {
-      emitError(
-        {
-          ...base,
-          ok: false,
-          error: 'unparseable worker output',
-          duration_ms,
-          stderr: truncate(result.stderr || result.stdout, 2000),
-        },
-        format,
-        result.code || 1,
-      );
-      return;
-    }
-    const isError = result.code !== 0 || parsed.errors.length > 0;
-    // Config pricing wins; otherwise fall back to opencode's own cost figure
-    // (models.dev pricing — notional on flat-rate plans like OpenCode Go).
-    let { cost_usd, cost_source } = computeCost(provider, model, parsed.usage);
-    if (cost_usd == null && parsed.cost != null) {
-      cost_usd = Math.round(parsed.cost * 1e6) / 1e6;
-      cost_source = 'opencode-reported';
-    }
-    const out = {
-      ok: !isError,
-      provider: providerId,
-      model,
-      role: roleName,
-      session_id: parsed.sessionId,
-      num_turns: parsed.steps || null,
-      duration_ms,
-      usage: parsed.usage,
-      cost_usd,
-      cost_source,
-      cli_reported_cost_usd: parsed.cost,
-      result: parsed.text || null,
-    };
-    if (isError) {
-      out.error = parsed.errors.join('; ') || `worker exited with code ${result.code}`;
-      out.stderr = truncate(result.stderr, 2000);
-      emitRun(out, format);
-      process.exit(result.code || 1);
-    }
-    emitRun(out, format);
-    return;
-  }
-
-  // claude runner: a single JSON object on stdout.
-  let cliJson = null;
-  try {
-    cliJson = JSON.parse(result.stdout);
-  } catch {
-    emitError(
-      {
+      const tail = truncate(raw.stderr || raw.stdout, 2000);
+      const cls = classifyFailure({ text: tail, exitCode: raw.code, ok: false });
+      return {
         ...base,
-        ok: false,
         error: 'unparseable worker output',
-        duration_ms,
-        stderr: truncate(result.stderr || result.stdout, 2000),
-      },
-      format,
-      result.code || 1,
-    );
-    return;
+        error_class: cls,
+        diagnostics: { stdout_tail: truncate(String(raw.stdout).slice(-1500), 1500) },
+      };
+    }
+    const errText = parsed.errors.join('; ');
+    const ok = raw.code === 0 && parsed.errors.length === 0;
+    base.ok = ok;
+    base.error_class = classifyFailure({ text: ok ? base.text : errText, exitCode: raw.code, ok });
+    if (!ok || base.error_class) {
+      // An opencode worker can exit 1 without an error event; surface what it did last.
+      base.error = errText || (ok ? 'empty response' : `worker exited with code ${raw.code}`);
+      base.diagnostics = {
+        last_events: parsed.lastEvents,
+        stdout_tail: truncate(String(raw.stdout).slice(-1500), 1500),
+      };
+    }
+    return base;
   }
 
-  const isError = result.code !== 0 || cliJson.is_error === true;
-  const usage = extractUsage(cliJson);
-  const { cost_usd, cost_source } = computeCost(provider, model, usage);
-
-  const out = {
-    ok: !isError,
-    provider: providerId,
-    model,
-    role: roleName,
-    session_id: cliJson.session_id || null,
-    num_turns: cliJson.num_turns ?? null,
-    duration_ms,
-    usage,
-    cost_usd,
-    cost_source,
-    cli_reported_cost_usd: cliJson.total_cost_usd ?? null,
-    result: cliJson.result ?? null,
-  };
-
-  if (isError) {
-    out.error = cliJson.error || cliJson.result || `worker exited with code ${result.code}`;
-    out.stderr = truncate(result.stderr, 2000);
-    emitRun(out, format);
-    process.exit(result.code || 1);
+  // claude runner
+  const parsed = parseClaudeStream(raw.stdout);
+  base.sessionId = parsed.sessionId;
+  if (raw.timedOut) {
+    return {
+      ...base,
+      text: parsed.lastAssistantText,
+      error: 'timeout',
+      error_class: 'timeout',
+      exitCode: 3,
+    };
   }
-
-  emitRun(out, format);
+  if (!parsed.result) {
+    if (!parsed.parsedAny) {
+      const tail = truncate(raw.stderr || raw.stdout, 2000);
+      const cls = classifyFailure({ text: tail, exitCode: raw.code, ok: false });
+      return { ...base, error: 'unparseable worker output', error_class: cls };
+    }
+    // Events arrived but no final result: the process died mid-stream.
+    return {
+      ...base,
+      text: parsed.lastAssistantText,
+      error: truncate(raw.stderr, 300) || 'worker stream ended without a result',
+      error_class: 'transient',
+    };
+  }
+  const r = parsed.result;
+  base.usage = extractUsage(r);
+  const cost = computeCost(provider, model, base.usage);
+  base.cost_usd = cost.cost_usd;
+  base.cost_source = cost.cost_source;
+  base.cli_cost = r.total_cost_usd ?? null;
+  base.num_turns = r.num_turns ?? null;
+  base.text = r.result ?? null;
+  const ok = raw.code === 0 && r.is_error !== true;
+  base.ok = ok;
+  base.error_class = classifyFailure({
+    text: base.text,
+    subtype: r.subtype,
+    apiErrorStatus: r.api_error_status,
+    exitCode: raw.code,
+    ok,
+  });
+  if (!ok || base.error_class) {
+    base.error = r.error || r.result || (ok ? 'empty response' : `worker exited with code ${raw.code}`);
+  }
+  return base;
 }
 
 function emitRun(out, format) {
@@ -1055,11 +1507,27 @@ Usage:
         --tools "<list>"         override role tools (claude runner only; opencode
                                  restricts tools via --agent / role "agent").
         --agent <name>           opencode agent to run the worker as (opencode runner).
+        --progress-file <path>   checkpoint file the worker appends "- done: …" lines to
+                                 (default: <task-file>.progress.md; "none" disables).
+        --retries <n>            automatic retries for rate_limit / transient /
+                                 empty_response failures (default defaults.maxRetries=3).
+        --max-parallel <n>       concurrent workers allowed on the provider (default
+                                 provider.maxParallel / defaults.maxParallelPerProvider=2;
+                                 0 = unlimited). A run waits for a free slot.
+
+Failure handling:
+  Every failure carries an error_class: rate_limit, transient, empty_response, max_turns,
+  timeout or error. transient/empty_response resume the same session (exponential backoff
+  from defaults.retryBackoffSec=15). rate_limit continues the session on provider.fallback
+  (same runner) or, if the reset time is within defaults.rateLimitWaitMaxSec, waits for it;
+  otherwise the run fails with retry_after_sec/reset_at (set provider.rateLimitTz, e.g.
+  "+08:00" for z.ai, so the reset wall clock can be interpreted). The output lists every
+  attempt; session_id is reported even on timeout so the run can be resumed by hand.
 
 Runners:
   Each provider runs on a runner: "claude" (default; headless claude -p against an
   Anthropic-compatible baseUrl) or "opencode" (opencode run; auth + model catalog come
-  from the opencode CLI, model ids look like "opencode-go/glm-5.2").
+  from the opencode CLI, model ids look like "opencode-go/glm-5.3").
 
 Config search order:
   $FLEET_CONFIG → $CLAUDE_PROJECT_DIR/.claude/fleet.config.json →

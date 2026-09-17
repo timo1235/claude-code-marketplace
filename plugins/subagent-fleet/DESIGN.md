@@ -109,14 +109,14 @@ Search order: `$FLEET_CONFIG` → `$CLAUDE_PROJECT_DIR/.claude/fleet.config.json
     "zai": {
       "baseUrl": "https://api.z.ai/api/anthropic",
       "apiKeyEnv": "ZAI_API_KEY",
-      "smallFastModel": "glm-5.2-air",
-      "models": { "strong": "glm-5.2", "default": "glm-5.2", "fast": "glm-5.2-air" }
+      "smallFastModel": "glm-5.3-flash",
+      "models": { "strong": "glm-5.3", "default": "glm-5.3", "fast": "glm-5.3-flash" }
     },
     "openrouter": {
       "baseUrl": "https://openrouter.ai/api",
       "apiKeyEnv": "OPENROUTER_API_KEY",
-      "smallFastModel": "z-ai/glm-4.6",
-      "models": { "strong": "deepseek/deepseek-v4", "default": "z-ai/glm-4.6", "fast": "z-ai/glm-4.6" }
+      "smallFastModel": "z-ai/glm-5.3-flash",
+      "models": { "strong": "z-ai/glm-5.3", "default": "z-ai/glm-5.3-flash", "fast": "z-ai/glm-5.3-flash" }
     }
   },
   "roles": {
@@ -145,15 +145,30 @@ Node, no external dependencies. Commands:
     `ANTHROPIC_SMALL_FAST_MODEL`, `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`;
     **removes** `ANTHROPIC_API_KEY`/OAuth tokens. The model is passed via `--model`
     (not additionally via env — avoid redundancy).
-  - execs `claude -p <task> --output-format json --model … --allowedTools …
+  - execs `claude -p <task> --output-format stream-json --verbose --model … --allowedTools …
     --permission-mode … --max-turns … --setting-sources "" --strict-mcp-config
-    --append-system-prompt <worker-preamble>` in the chosen `cwd`;
+    --append-system-prompt <worker-preamble>` in the chosen `cwd`; the stream is read so
+    the `session_id` (first line, `system/init`) is known even when the worker dies;
   - **hard timeout** (`timeoutSec`, default 30 min): worker is killed (whole process
-    group), error JSON returned.
-  - Output for the orchestrator: `result`, `session_id`, `usage` (tokens), computed cost
-    (from `pricing` if configured — the CLI's own `total_cost_usd` is unreliable for
-    third-party models since it is computed with Anthropic prices), exit code != 0 on
-    error.
+    group), error JSON returned — with the `session_id`, so the run can be resumed;
+  - **concurrency slot** per provider (`maxParallel` / `defaults.maxParallelPerProvider`,
+    default 2): pid files under `<workerStateDir>/slots/<provider>/`; a run waits while
+    the provider is at capacity. Parallel workers share one quota — four `glm-5.3`
+    coders drained a five-hour z.ai window in twenty minutes;
+  - **classified retries** (`maxRetries`, default 3): `rate_limit` → continue the same
+    session on `provider.fallback` (same runner) or wait until the parsed reset time if
+    within `rateLimitWaitMaxSec`; `transient` (dropped stream, 5xx, died mid-stream) and
+    `empty_response` → resume the same session with a continuation prompt after
+    exponential backoff (`retryBackoffSec`); `max_turns` / `timeout` / `error` → no retry;
+  - **progress file** (`--progress-file`, default `<task-file>.progress.md`): the preamble
+    tells the worker to append `- done: …` per deliverable and to read the file first on
+    a resume, so a continued run does not redo finished work;
+  - Output for the orchestrator: `result`, `session_id`, `usage` (tokens, summed over
+    attempts), computed cost (from `pricing` if configured — the CLI's own
+    `total_cost_usd` is unreliable for third-party models since it is computed with
+    Anthropic prices), `attempts[]`, and on failure `error_class`, `retry_after_sec`,
+    `reset_at`, `diagnostics` (opencode: last events + stdout tail); exit code != 0 on
+    error, 3 on timeout.
 - `fleet.mjs run --resume <session-id> --task "<follow-up>"` — **review loop**: continues
   the worker session with full context (same env setup as the initial dispatch).
   If a review fails, the fix costs only the delta instead of a fresh worker.
@@ -161,7 +176,11 @@ Node, no external dependencies. Commands:
 **Worker preamble** (append-system-prompt): "You are a delegated worker. Do exactly the
 assigned task, no scope expansion. You cannot ask questions — if a real decision is
 needed, state it and stop. Answer concisely: what was done, which files changed, what was
-verified, what remains open. Your edits will be reviewed by the orchestrator."
+verified, what remains open. Your edits will be reviewed by the orchestrator." Followed by
+the context rules (never read more than ~30 KB per call, never re-read, write each
+deliverable as soon as it is designed) and, when a progress file is set, the checkpoint
+rules. Observed motivation: one work package produced 8M cache-read tokens by re-reading
+large files in full — those are the runs that hit the quota.
 
 ### 3. Skill (`skills/fleet/SKILL.md`)
 
@@ -203,7 +222,7 @@ Per-provider field `"runner": "opencode"` (default `"claude"`). Differences:
 - **No `baseUrl`/`apiKeyEnv`** — auth comes from `opencode auth` / `/connect`
   (`~/.local/share/opencode/auth.json`). `doctor` checks the binary; `doctor --ping` does a
   real 1-turn run.
-- **Model ids** are `catalog/model` (e.g. `opencode-go/glm-5.2`), listable via
+- **Model ids** are `catalog/model` (e.g. `opencode-go/glm-5.3`), listable via
   `opencode models`. Tiers resolve exactly like on the claude runner; literals pass through.
 - **Dispatch**: `opencode run --model <id> --format json --pure --dir <cwd> [--auto]
   [--agent <name>] [--session <id>] "<preamble + task>"`.
@@ -225,7 +244,7 @@ Per-provider field `"runner": "opencode"` (default `"claude"`). Differences:
   `cost_source: "opencode-reported"` (models.dev pricing — notional on flat-rate plans).
 
 Verified live against OpenCode Go (opencode 1.18.9) on 2026-07-29: doctor/ping, dispatch with
-`opencode-go/glm-5.2` (file created in `--cwd`), resume with retained context, ad-hoc literal
+`opencode-go/glm-5.3` (file created in `--cwd`), resume with retained context, ad-hoc literal
 model (`opencode-go/kimi-k3`), error path (unknown model → `ok:false`, exit 1).
 
 ## Security

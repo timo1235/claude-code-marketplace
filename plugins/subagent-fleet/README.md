@@ -24,8 +24,8 @@ process**. Two runners exist, selected per provider via the `runner` field:
   worker's env.
 - **`opencode`** — a headless `opencode run`. Auth and the model catalog come from the opencode
   CLI itself (`opencode auth` / `/connect`), so no baseUrl or API key appears in the fleet
-  config, and **OpenAI-format-only models** (e.g. `glm-5.2` or `kimi-k3` on the OpenCode Go
-  plan) become reachable. Model ids are `catalog/model`, e.g. `opencode-go/glm-5.2` — list them
+  config, and **OpenAI-format-only models** (e.g. `glm-5.3` or `kimi-k3` on the OpenCode Go
+  plan) become reachable. Model ids are `catalog/model`, e.g. `opencode-go/glm-5.3` — list them
   with `opencode models`.
 
 Either way the result (including token usage and a `session_id` for follow-ups) comes back as
@@ -85,9 +85,9 @@ settings inside a worker.) opencode workers run with `--pure` (no external openc
     "opencode": {
       "runner": "opencode",
       "models": {
-        "strong": "opencode-go/glm-5.2",
-        "default": "opencode-go/qwen3.7-plus",
-        "fast": "opencode-go/qwen3.6-plus"
+        "strong": "opencode-go/glm-5.3",
+        "default": "opencode-go/glm-5.3",
+        "fast": "opencode-go/glm-5.3-flash"
       }
     }
   },
@@ -100,7 +100,10 @@ settings inside a worker.) opencode workers run with `--pure` (no external openc
     "grunt":      { "provider": "deepseek", "model": "fast",   "tools": "Read,Edit,Write,Grep,Glob" }
   },
 
-  "defaults": { "permissionMode": "acceptEdits", "maxTurns": 40, "timeoutSec": 1800 }
+  "defaults": {
+    "permissionMode": "acceptEdits", "maxTurns": 40, "timeoutSec": 1800,
+    "maxParallelPerProvider": 2, "maxRetries": 3, "retryBackoffSec": 15, "rateLimitWaitMaxSec": 0
+  }
 }
 ```
 
@@ -116,7 +119,9 @@ settings inside a worker.) opencode workers run with `--pure` (no external openc
   `--agent`).
 - **defaults** — `permissionMode`, `maxTurns`, and the hard-kill `timeoutSec` (default 30 min).
   Optionally `settingSources` (default `""` = fully isolated worker) if you need user/project
-  settings inside workers, and `workerStateDir` (see below).
+  settings inside workers, `workerStateDir` (see below), and the retry / concurrency knobs
+  `maxParallelPerProvider`, `maxRetries`, `retryBackoffSec`, `rateLimitWaitMaxSec` (see
+  "Failure handling"). Per provider: `fallback`, `rateLimitTz`, `maxParallel`.
 
 ### Worker session storage
 
@@ -146,6 +151,42 @@ keeps working, since a resumed run gets the same environment.
 The state dir is pure scratch — delete it whenever you like; only `--resume` of an older
 worker session depends on it.
 
+### Failure handling, retries and quotas
+
+Parallel workers on one provider key share **one quota**. Four `glm-5.3` coders drained a full
+five-hour z.ai window in twenty minutes and two of them died mid-file with a 429 — while the
+dispatcher treated that as a fatal error and threw the session away. `run` therefore does three
+things on its own now:
+
+- **Concurrency slots.** A run takes a slot under `<workerStateDir>/slots/<provider>/` and
+  waits (message on stderr) while the provider already has `maxParallel` /
+  `defaults.maxParallelPerProvider` (default 2) live workers. `--max-parallel 0` disables it.
+- **Classified retries.** Every failure gets an `error_class`:
+
+  | class | meaning | action |
+  |---|---|---|
+  | `rate_limit` | 429 / quota exhausted | continue the *same session* on `provider.fallback` (same runner); else wait if the reset is within `rateLimitWaitMaxSec`; else fail with `retry_after_sec` / `reset_at` |
+  | `transient` | dropped stream, network error, 5xx, process died mid-stream | resume the same session after `retryBackoffSec · 2^n` |
+  | `empty_response` | the model returned nothing ("No response requested.") | resume with a nudge |
+  | `max_turns`, `timeout`, `error` | budget exhausted / hard kill / anything else | not retried |
+
+  Up to `maxRetries` (default 3, `--retries <n>`) retries. Because the claude runner's session
+  transcript is local, a fallback provider picks up the full context — nothing is redone.
+  Providers phrase reset times as a wall clock in their own timezone; set `rateLimitTz`
+  (z.ai: `"+08:00"`) so `retry_after_sec` can be computed.
+- **Checkpoints.** With `--task-file`, the worker gets a **progress file**
+  (`<task-file>.progress.md`, or `--progress-file <path>`; `none` disables) and is told to
+  append `- done: …` after each deliverable. A resumed run reads it first and skips finished
+  work — also when you resume by hand.
+
+The output lists every `attempts[]` entry (provider, model, class, turns, duration,
+session_id); top-level `provider`/`model` are the ones that produced the final result, and
+`usage` / `cost_usd` are summed over all attempts. `session_id` is reported on **every**
+failure, including timeout, so a dead run can always be continued with `--resume`.
+
+Runs that die anyway are almost always **too big**. Keep a worker under ~15 minutes / ~40 turns
+and split larger work into sequential packages — a lost run then costs one step, not an hour.
+
 ## Usage
 
 Most of the time the **`fleet` skill** drives this — it plans, dispatches and reviews for you
@@ -163,8 +204,10 @@ node scripts/fleet.mjs run --role coder --resume <session_id> --task "<fix>"   #
 form takes any model id the provider serves, e.g. `opencode-go/kimi-k3`, even if it isn't in
 the config), `--agent <name>` for opencode workers, and `--task-file <path>` (or stdin) instead
 of `--task`. It returns JSON with `result`,
-`session_id`, `usage`, and a computed `cost_usd` when `pricing` is set. A failed review is best
-handled with `--resume` (keeps context, pays only the delta) rather than a fresh worker.
+`session_id`, `usage`, a computed `cost_usd` when `pricing` is set, and an `attempts[]` list
+(on failure also `error_class`, `retry_after_sec`, `reset_at`, `diagnostics` — see "Failure
+handling"). A failed review is best handled with `--resume` (keeps context, pays only the
+delta) rather than a fresh worker.
 
 ## Security
 
@@ -200,7 +243,7 @@ Confirmed-compatible:
 | DeepSeek        | claude   | `https://api.deepseek.com/anthropic` | |
 | z.ai / GLM      | claude   | `https://api.z.ai/api/anthropic`     | |
 | OpenRouter      | claude   | `https://openrouter.ai/api`          | "Anthropic skin", incl. tool-use / thinking |
-| OpenCode Go/Zen | opencode | via `opencode auth` / `/connect`     | all Go models incl. OpenAI-format-only ones (`glm-5.2`, `kimi-k3`, ...) |
+| OpenCode Go/Zen | opencode | via `opencode auth` / `/connect`     | all Go models incl. OpenAI-format-only ones (`glm-5.3`, `kimi-k3`, ...) |
 
 The model names and prices in `fleet.config.example.json` are **examples** (prices as of
 July 2026), not guarantees. Run
