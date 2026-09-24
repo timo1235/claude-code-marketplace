@@ -27,8 +27,13 @@
         "tz": "+08:00", "days": [1, 2, 3, 4, 5], "windows": ["14:00-18:00"],
         "quota": { "glm-5.3": { "offPeak": 1, "peak": 3 }, "glm-5.3-flash": { "offPeak": 0.4, "peak": 1.2 } },
         "maxParallel": 1,
-        "preferFallback": false
-      }
+        "preferFallback": false,
+        "refuse": false,
+        "exceptions": [
+          { "from": "2026-09-25", "to": "2026-10-07", "treatAs": "offPeak", "note": "all-day off-peak promotion" }
+        ]
+      },
+      "quota": { "kind": "zai", "apiKeyEnv": "ZAI_API_KEY", "refuseAt": 100 }
     },
     "openrouter": {
       "baseUrl": "https://openrouter.ai/api",
@@ -42,7 +47,8 @@
         "strong": "opencode-go/glm-5.3",
         "default": "opencode-go/glm-5.3",
         "fast": "opencode-go/glm-5.3-flash"
-      }
+      },
+      "quota": { "kind": "opencode-go", "apiKeyEnv": "OPENCODE_GO_API_KEY" }
     }
   },
   "roles": {

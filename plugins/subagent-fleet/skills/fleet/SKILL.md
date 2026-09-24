@@ -95,13 +95,17 @@ enforces `maxParallel` per provider (default 2 — a third run waits for a slot)
 too: spread a wave over providers (two on z.ai, one on OpenRouter, …) rather than stacking
 everything on one key, and stagger starts when the packages are large.
 
-## Peak hours
+## Peak hours and live quota
 
 Some flat-rate plans meter quota faster at certain times (z.ai: `glm-5.3` counts 3× Mon–Fri
 14:00–18:00 UTC+8 = 08:00–12:00 German time). `doctor` shows whether a provider's peak is
 **ACTIVE NOW**, and `run` reports `quota_multiplier`. During peak, dispatch fewer strong-tier
 workers to that provider, use the fast tier or another provider for the bulk, or postpone a
 large fan-out — a 3× wave is how a five-hour quota vanishes in twenty minutes.
+
+`doctor` also prints the **live quota** of any provider configured for it (`quota: rolling 0%,
+weekly 0%, monthly 100% rate-limited — BLOCKS RUNS`). Read it before planning a wave: a plan
+that is already exhausted needs a different provider, not a retry.
 
 ## Keep runs short and resumable
 
@@ -125,6 +129,11 @@ Read `error_class` in the output before doing anything:
 - `timeout` — the run exceeded `timeoutSec`. `session_id` is still reported: resume it with a
   smaller remaining scope, or pass `--timeout` if the package genuinely needs longer.
 - `max_turns` — the turn budget was the point; review what exists before granting more.
+- `peak_blocked` — the provider is in a peak window and refuses runs. Do **not** override
+  reflexively: dispatch to another provider, postpone until the time named in `peak_until`, or
+  ask your human partner before spending 3× quota with `--allow-peak`.
+- `quota_blocked` — the plan is exhausted; `reset_at` says until when. Another provider or wait.
+  `--allow-quota` only makes sense when you believe the quota endpoint is wrong.
 - `error` — read `error` / `stderr` / `diagnostics`; this is not a retry case.
 
 Never restart a dead worker from scratch while its `session_id` is known — a resume keeps the

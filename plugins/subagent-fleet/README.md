@@ -202,7 +202,11 @@ describes that with a `peak` block:
   "tz": "+08:00", "days": [1, 2, 3, 4, 5], "windows": ["14:00-18:00"],   // 0 = Sunday
   "quota": { "glm-5.3": { "offPeak": 1, "peak": 3 }, "glm-5.3-flash": { "offPeak": 0.4, "peak": 1.2 } },
   "maxParallel": 1,          // tighter slot limit while peak is active (optional)
-  "preferFallback": false    // start runs on provider.fallback during peak (optional)
+  "preferFallback": false,   // start runs on provider.fallback during peak (optional)
+  "refuse": false,           // refuse the run outright instead of warning (optional)
+  "exceptions": [            // days on which the windows do not apply (optional)
+    { "from": "2026-09-25", "to": "2026-10-07", "treatAs": "offPeak", "note": "promo" }
+  ]
 }
 ```
 
@@ -211,6 +215,37 @@ Effects: `doctor` shows whether peak is active right now; `run` prints a stderr 
 the plan actually charges) and reports `quota_multiplier` per attempt and at top level. With
 `preferFallback` a run starts on the fallback provider (e.g. pay-per-use OpenRouter) instead of
 burning 3× quota — whether that trade is worth it is your call, hence off by default.
+
+With `refuse: true` the warning becomes a refusal: the run ends before a worker starts with
+`error_class: peak_blocked` and exit code 4, naming the window and when it ends. `--allow-peak`
+overrides it for one run.
+
+No provider publishes its peak windows over an API, so they stay configuration. Plans do change
+them temporarily, though — z.ai ran an all-day off-peak promotion — and `exceptions` covers that
+without editing and later restoring the windows. `from`/`to` are inclusive calendar dates in
+`peak.tz`, either end may be omitted, and the first matching entry replaces the window check.
+
+### Live quota
+
+Peak windows are a guess at what a run costs. Some plans publish what is actually **left**, which
+is the better gate: a dispatch against an exhausted plan dies on a 429 after minutes of work,
+while a pre-flight check fails in a second and says when the window resets.
+
+```jsonc
+"quota": {
+  "kind": "opencode-go",            // adapter: "zai" or "opencode-go"
+  "apiKeyEnv": "OPENCODE_GO_API_KEY", // defaults to the provider's own apiKeyEnv
+  "refuseAt": 100,                  // percent; default 100 = only when a window is exhausted
+  "cacheSec": 60,                   // reuse the last answer for this long (fan-outs)
+  "timeoutSec": 10
+}
+```
+
+`doctor` prints the live figures (`quota: rolling 0%, weekly 0%, monthly 100% rate-limited —
+BLOCKS RUNS`), and `run` refuses with `error_class: quota_blocked`, exit code 4 and `reset_at`.
+`--allow-quota` overrides it. A failing quota endpoint is reported on stderr and never blocks a
+run. Note that the quota endpoints want the **provider's own** key, so this needs that key locally
+even when the inference itself goes through a gateway.
 
 ## Usage
 

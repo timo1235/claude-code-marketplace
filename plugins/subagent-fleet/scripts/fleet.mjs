@@ -255,6 +255,55 @@ function validateConfig(config, configPath) {
           2,
         );
       }
+      if (pk.exceptions !== undefined) {
+        if (!Array.isArray(pk.exceptions)) {
+          throw new FleetError(
+            `Config ${configPath}: provider "${id}".peak.exceptions must be an array.`,
+            2,
+          );
+        }
+        for (const e of pk.exceptions) {
+          if (!e || typeof e !== 'object' || (!e.from && !e.to)) {
+            throw new FleetError(
+              `Config ${configPath}: provider "${id}".peak.exceptions entries need "from" and/or "to".`,
+              2,
+            );
+          }
+          for (const f of ['from', 'to']) {
+            if (e[f] !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(String(e[f]))) {
+              throw new FleetError(
+                `Config ${configPath}: provider "${id}".peak.exceptions.${f} "${e[f]}" must be "YYYY-MM-DD".`,
+                2,
+              );
+            }
+          }
+          if (e.treatAs !== undefined && !['peak', 'offPeak'].includes(String(e.treatAs))) {
+            throw new FleetError(
+              `Config ${configPath}: provider "${id}".peak.exceptions.treatAs must be "peak" or "offPeak".`,
+              2,
+            );
+          }
+        }
+      }
+    }
+    if (p.quota !== undefined) {
+      const q = p.quota;
+      if (!q || typeof q !== 'object') {
+        throw new FleetError(`Config ${configPath}: provider "${id}".quota must be an object.`, 2);
+      }
+      if (!QUOTA_KINDS[q.kind]) {
+        throw new FleetError(
+          `Config ${configPath}: provider "${id}".quota.kind must be one of ` +
+            `${Object.keys(QUOTA_KINDS).join(', ')}.`,
+          2,
+        );
+      }
+      if (q.refuseAt !== undefined && !(Number(q.refuseAt) > 0)) {
+        throw new FleetError(
+          `Config ${configPath}: provider "${id}".quota.refuseAt must be a positive percentage.`,
+          2,
+        );
+      }
     }
   }
 
@@ -406,7 +455,15 @@ async function cmdDoctor(argv) {
         .join(', ');
       process.stdout.write(
         `    peak:           ${describePeak(p.peak)} — ${active ? 'ACTIVE NOW' : 'off-peak now'}` +
-          `${factors ? `, quota ${factors}` : ''}\n`,
+          `${factors ? `, quota ${factors}` : ''}${p.peak.refuse ? ', refuses runs' : ''}\n`,
+      );
+    }
+    if (p.quota) {
+      const live = await fetchQuota(id, p, envFileValues, resolveWorkerStateDir(config));
+      const blocked = quotaBlockers(p, live);
+      process.stdout.write(
+        `    quota:          ${describeQuota(live)}` +
+          `${blocked.length ? ' — BLOCKS RUNS' : ''}\n`,
       );
     }
   }
@@ -949,8 +1006,35 @@ function wallClock(date, tz) {
   return { day: shifted.getUTCDay(), minute: shifted.getUTCHours() * 60 + shifted.getUTCMinutes() };
 }
 
+// Calendar date of `date` in the provider's timezone, as "YYYY-MM-DD".
+function wallClockDate(date, tz) {
+  return new Date(date.getTime() + tzOffsetMinutes(tz) * 60000).toISOString().slice(0, 10);
+}
+
+// A plan can suspend or extend its peak windows for a stretch of days — z.ai ran an
+// all-day off-peak promotion 2026-09-25..2026-10-07 that the windows know nothing about.
+// peak.exceptions covers those without editing (and later restoring) the windows:
+//   "exceptions": [{ "from": "2026-09-25", "to": "2026-10-07", "treatAs": "offPeak",
+//                    "note": "z.ai promo" }]
+// from/to are inclusive calendar dates in peak.tz; either may be omitted for an open end.
+// The first matching entry wins and replaces the window check entirely.
+function peakExceptionFor(peak, date = new Date()) {
+  const list = Array.isArray(peak?.exceptions) ? peak.exceptions : [];
+  const today = wallClockDate(date, peak?.tz);
+  for (const e of list) {
+    if (!e || (!e.from && !e.to)) continue;
+    if (e.from && today < String(e.from)) continue;
+    if (e.to && today > String(e.to)) continue;
+    return e;
+  }
+  return null;
+}
+
 function isPeak(peak, date = new Date()) {
-  if (!peak || !Array.isArray(peak.windows) || peak.windows.length === 0) return false;
+  if (!peak) return false;
+  const exception = peakExceptionFor(peak, date);
+  if (exception) return exception.treatAs === 'peak';
+  if (!Array.isArray(peak.windows) || peak.windows.length === 0) return false;
   const days = Array.isArray(peak.days) ? peak.days : [1, 2, 3, 4, 5];
   const { day, minute } = wallClock(date, peak.tz);
   if (!days.includes(day)) return false;
@@ -969,11 +1053,142 @@ function quotaMultiplier(provider, model, date = new Date()) {
   return typeof v === 'number' && v > 0 ? v : 1;
 }
 
-function describePeak(peak) {
+// End of the window that is active right now, as wall clock in the provider's timezone.
+// null when no window is active (including when an exception forces peak).
+function peakWindowEnd(peak, date = new Date()) {
+  if (!peak || !Array.isArray(peak.windows)) return null;
+  const { minute } = wallClock(date, peak.tz);
+  for (const w of peak.windows) {
+    const win = parseWindow(w);
+    if (win && minute >= win.from && minute < win.to) {
+      const hh = String(Math.floor(win.to / 60)).padStart(2, '0');
+      const mm = String(win.to % 60).padStart(2, '0');
+      return `${hh}:${mm} ${peak.tz || 'UTC'}`;
+    }
+  }
+  return null;
+}
+
+function describePeak(peak, date = new Date()) {
   if (!peak || !Array.isArray(peak.windows)) return '(none)';
   const days = Array.isArray(peak.days) ? peak.days : [1, 2, 3, 4, 5];
   const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  return `${days.map((d) => names[d] ?? d).join(',')} ${peak.windows.join(', ')} (${peak.tz || 'UTC'})`;
+  const base = `${days.map((d) => names[d] ?? d).join(',')} ${peak.windows.join(', ')} (${peak.tz || 'UTC'})`;
+  const ex = peakExceptionFor(peak, date);
+  if (!ex) return base;
+  const span = `${ex.from || '…'}..${ex.to || '…'}`;
+  const as = ex.treatAs === 'peak' ? 'always peak' : 'always off-peak';
+  return `${base} [exception ${span}: ${as}${ex.note ? `, ${ex.note}` : ''}]`;
+}
+
+// ---------------------------------------------------------------------------
+// Live quota (optional, per provider)
+// ---------------------------------------------------------------------------
+
+// Peak windows are a wall-clock guess at what a plan costs. Some plans also publish what
+// is actually left, which is the better gate: a dispatch against an exhausted plan dies
+// on a 429 after minutes of work, while a pre-flight check fails in a second and says
+// when the window resets. provider.quota turns that on:
+//   "quota": { "kind": "opencode-go", "apiKeyEnv": "OPENCODE_GO_API_KEY", "refuseAt": 100 }
+// kind picks the response adapter, url defaults per kind, refuseAt is a percentage
+// (100 = only when a window is actually exhausted). The endpoints are read-only usage
+// views, but the key is the provider's normal key — keep that in mind when the inference
+// itself runs through a gateway and the provider key would otherwise not be needed here.
+const QUOTA_KINDS = {
+  zai: {
+    url: 'https://api.z.ai/api/monitor/usage/quota/limit',
+    // { data: { limits: [{ unit, usage, currentValue, remaining, percentage, nextResetTime }] } }
+    parse(body) {
+      const units = { 3: '5h', 6: 'week' };
+      return (body?.data?.limits || []).map((l) => {
+        const percent = Number(l.percentage);
+        const pct = Number.isFinite(percent) ? percent : null;
+        return {
+          window: units[l.unit] || `unit${l.unit}`,
+          percent: pct,
+          status: pct !== null && pct >= 100 ? 'rate-limited' : 'ok',
+          resetAt: l.nextResetTime ? new Date(Number(l.nextResetTime)).toISOString() : null,
+        };
+      });
+    },
+  },
+  'opencode-go': {
+    url: 'https://opencode.ai/zen/go/v1/usage',
+    // { usage: { rolling: { status, percent, resetsAt }, weekly: {...}, monthly: {...} } }
+    parse(body) {
+      return Object.entries(body?.usage || {}).map(([window, v]) => ({
+        window,
+        percent: typeof v?.percent === 'number' ? v.percent : null,
+        status: v?.status || 'ok',
+        resetAt: v?.resetsAt || null,
+      }));
+    },
+  },
+};
+
+function quotaCacheFile(stateDir, providerId) {
+  const base = stateDir || DEFAULT_WORKER_STATE_DIR;
+  return path.join(base, 'quota', `${providerId.replace(/[^\w.-]/g, '_')}.json`);
+}
+
+// Returns { windows: [...] } or { error: "..." }. Never throws: a broken quota endpoint
+// must not stop a dispatch, it only loses the gate.
+async function fetchQuota(providerId, provider, envFileValues, stateDir) {
+  const q = provider?.quota;
+  if (!q) return null;
+  const kind = QUOTA_KINDS[q.kind];
+  if (!kind) return { error: `unknown quota.kind "${q.kind}"` };
+
+  const cacheSec = Number(q.cacheSec ?? 60);
+  const file = quotaCacheFile(stateDir, providerId);
+  if (cacheSec > 0) {
+    try {
+      const cached = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (Date.now() - Number(cached.at) < cacheSec * 1000) return cached.data;
+    } catch {}
+  }
+
+  const envName = q.apiKeyEnv || provider.apiKeyEnv;
+  const key = lookupKey(envName, envFileValues);
+  if (!key) return { error: `quota key not set (env ${envName})` };
+
+  let data;
+  try {
+    const res = await fetch(q.url || kind.url, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(Number(q.timeoutSec ?? 10) * 1000),
+    });
+    if (!res.ok) return { error: `HTTP ${res.status}` };
+    data = { windows: kind.parse(await res.json()) };
+  } catch (err) {
+    return { error: String(err?.message || err) };
+  }
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ at: Date.now(), data }));
+  } catch {}
+  return data;
+}
+
+// Windows that should stop a dispatch: exhausted, or past the configured percentage.
+function quotaBlockers(provider, quota) {
+  if (!quota || quota.error || !Array.isArray(quota.windows)) return [];
+  const refuseAt = Number(provider?.quota?.refuseAt ?? 100);
+  return quota.windows.filter(
+    (w) =>
+      w.status === 'rate-limited' ||
+      w.status === 'exhausted' ||
+      (typeof w.percent === 'number' && w.percent >= refuseAt),
+  );
+}
+
+function describeQuota(quota) {
+  if (!quota) return null;
+  if (quota.error) return `unavailable (${quota.error})`;
+  if (!quota.windows?.length) return 'no windows reported';
+  return quota.windows
+    .map((w) => `${w.window} ${w.percent == null ? '?' : w.percent}%${w.status && w.status !== 'ok' ? ` ${w.status}` : ''}`)
+    .join(', ');
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,6 +1392,85 @@ async function cmdRun(argv) {
       if (fbModel) {
         process.stderr.write(`fleet: preferFallback → starting on "${fbId}" (${fbModel}) instead.\n`);
         current = { providerId: fbId, provider: fb, model: fbModel, key: keyFor(fbId, fb), runner };
+      }
+    }
+  }
+
+  // Pre-flight gates. A worker that must not run should fail here, in a second, with a
+  // reason — not after ten minutes on a 429, and not silently at 3× quota. Both gates are
+  // opt-in per provider (peak.refuse / quota) and both can be overridden per run.
+  const gateAt = Date.now();
+  const gateFail = (error_class, error, extra = {}) => {
+    emitRun(
+      {
+        ok: false,
+        provider: current.providerId,
+        model: current.model,
+        role: roleName,
+        session_id: null,
+        num_turns: null,
+        duration_ms: Date.now() - gateAt,
+        usage: null,
+        cost_usd: null,
+        cost_source: 'unavailable',
+        quota_multiplier: quotaMultiplier(current.provider, current.model),
+        result: null,
+        attempts: [],
+        progress_file: progressFile,
+        error,
+        error_class,
+        ...extra,
+      },
+      format,
+    );
+    process.exit(4);
+  };
+
+  if (current.provider.peak?.refuse && isPeak(current.provider.peak) && !flags['allow-peak']) {
+    const factor = quotaMultiplier(current.provider, current.model);
+    if (factor > 1) {
+      const until = peakWindowEnd(current.provider.peak);
+      gateFail(
+        'peak_blocked',
+        `peak hours on "${current.providerId}": ${current.model} counts ${factor}× ` +
+          `(${describePeak(current.provider.peak)}${until ? `, until ${until}` : ''}). ` +
+          `Run off-peak, pick another provider, or pass --allow-peak.`,
+        until ? { peak_until: until } : {},
+      );
+    }
+  }
+
+  if (current.provider.quota && !flags['allow-quota']) {
+    const quota = await fetchQuota(
+      current.providerId,
+      current.provider,
+      envFileValues,
+      workerStateDir,
+    );
+    if (quota?.error) {
+      process.stderr.write(
+        `fleet: quota check on "${current.providerId}" failed (${quota.error}); continuing.\n`,
+      );
+    } else {
+      const hit = quotaBlockers(current.provider, quota);
+      if (hit.length) {
+        const resetAt = hit
+          .map((w) => w.resetAt)
+          .filter(Boolean)
+          .sort()[0];
+        gateFail(
+          'quota_blocked',
+          `quota exhausted on "${current.providerId}": ` +
+            hit
+              .map(
+                (w) =>
+                  `${w.window} ${w.percent == null ? '?' : w.percent}% (${w.status})` +
+                  `${w.resetAt ? `, resets ${w.resetAt}` : ''}`,
+              )
+              .join('; ') +
+            `. Wait for the reset, pick another provider, or pass --allow-quota.`,
+          resetAt ? { reset_at: resetAt } : {},
+        );
       }
     }
   }
@@ -1644,10 +1938,13 @@ Usage:
         --max-parallel <n>       concurrent workers allowed on the provider (default
                                  provider.maxParallel / defaults.maxParallelPerProvider=2;
                                  0 = unlimited). A run waits for a free slot.
+        --allow-peak             run even though provider.peak.refuse would block it.
+        --allow-quota            run even though the live quota check would block it.
 
 Failure handling:
   Every failure carries an error_class: rate_limit, transient, empty_response, max_turns,
-  timeout or error. transient/empty_response resume the same session (exponential backoff
+  timeout, peak_blocked, quota_blocked or error. peak_blocked/quota_blocked are refused
+  before a worker starts (exit 4) and are never retried — they say what to wait for. transient/empty_response resume the same session (exponential backoff
   from defaults.retryBackoffSec=15). rate_limit continues the session on provider.fallback
   (same runner) or, if the reset time is within defaults.rateLimitWaitMaxSec, waits for it;
   otherwise the run fails with retry_after_sec/reset_at (set provider.rateLimitTz, e.g.
@@ -1656,10 +1953,26 @@ Failure handling:
 
 Peak hours:
   provider.peak = { tz, days, windows, quota: { <model>: { offPeak, peak } }, maxParallel,
-  preferFallback } marks times when a metered plan counts quota faster (z.ai: glm-5.3 3×
-  Mon–Fri 14:00–18:00 UTC+8). run reports quota_multiplier, scales cost_usd by it, applies
-  peak.maxParallel and, with preferFallback, starts on provider.fallback instead. doctor
-  shows whether peak is active now.
+  preferFallback, refuse, exceptions } marks times when a metered plan counts quota faster
+  (z.ai: glm-5.3 3× Mon–Fri 14:00–18:00 UTC+8). run reports quota_multiplier, scales
+  cost_usd by it, applies peak.maxParallel and, with preferFallback, starts on
+  provider.fallback instead. doctor shows whether peak is active now.
+  refuse: true turns the warning into a refusal (error_class peak_blocked, exit 4) unless
+  --allow-peak is passed. Providers do not publish their windows, so they stay config —
+  but a plan can suspend them for a stretch of days, which exceptions covers:
+    "exceptions": [{ "from": "2026-09-25", "to": "2026-10-07", "treatAs": "offPeak",
+                     "note": "promo" }]
+  Inclusive calendar dates in peak.tz, either end optional; the first match replaces the
+  window check.
+
+Live quota:
+  provider.quota = { kind, apiKeyEnv, url, refuseAt, cacheSec, timeoutSec } asks the plan
+  what is actually left before a worker starts, so an exhausted plan fails in a second
+  with its reset time instead of dying on a 429 after ten minutes. kind selects the
+  adapter (zai, opencode-go) and its default url; apiKeyEnv defaults to the provider's own
+  key; refuseAt is a percentage (default 100 = only when a window reports exhausted);
+  cacheSec (default 60) keeps a fan-out from hammering the endpoint. A failing check is
+  reported on stderr and never blocks. Override a block with --allow-quota.
 
 Runners:
   Each provider runs on a runner: "claude" (default; headless claude -p against an
