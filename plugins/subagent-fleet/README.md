@@ -218,7 +218,9 @@ burning 3× quota — whether that trade is worth it is your call, hence off by 
 
 With `refuse: true` the warning becomes a refusal: the run ends before a worker starts with
 `error_class: peak_blocked` and exit code 4, naming the window and when it ends. `--allow-peak`
-overrides it for one run.
+overrides it for one run. Before refusing, the run tries `provider.fallback` (same runner) and
+only fails when that provider is blocked as well — so a second plan takes over instead of the
+work stopping.
 
 No provider publishes its peak windows over an API, so they stay configuration. Plans do change
 them temporarily, though — z.ai ran an all-day off-peak promotion — and `exceptions` covers that
@@ -244,7 +246,7 @@ while a pre-flight check fails in a second and says when the window resets.
 `doctor` prints the live figures (`quota: rolling 0%, weekly 0%, monthly 100% rate-limited —
 BLOCKS RUNS`), and `run` refuses with `error_class: quota_blocked`, exit code 4 and `reset_at`.
 `--allow-quota` overrides it. A failing quota endpoint is reported on stderr and never blocks a
-run. Note that the quota endpoints want the **provider's own** key, so this needs that key locally
+run. As with peak, a blocked run tries `provider.fallback` first. Note that the quota endpoints want the **provider's own** key, so this needs that key locally
 even when the inference itself goes through a gateway.
 
 ## Usage

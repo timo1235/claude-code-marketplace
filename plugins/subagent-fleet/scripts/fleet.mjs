@@ -1398,9 +1398,83 @@ async function cmdRun(argv) {
 
   // Pre-flight gates. A worker that must not run should fail here, in a second, with a
   // reason — not after ten minutes on a 429, and not silently at 3× quota. Both gates are
-  // opt-in per provider (peak.refuse / quota) and both can be overridden per run.
+  // opt-in per provider (peak.refuse / quota) and both can be overridden per run. When the
+  // provider has a usable fallback, a blocked run moves there instead of failing: that is
+  // the whole point of keeping a second plan around.
   const gateAt = Date.now();
-  const gateFail = (error_class, error, extra = {}) => {
+
+  // Returns null when `cand` may run, otherwise why it may not.
+  const gateReason = async (cand) => {
+    if (cand.provider.peak?.refuse && isPeak(cand.provider.peak) && !flags['allow-peak']) {
+      const factor = quotaMultiplier(cand.provider, cand.model);
+      if (factor > 1) {
+        const until = peakWindowEnd(cand.provider.peak);
+        return {
+          error_class: 'peak_blocked',
+          error:
+            `peak hours on "${cand.providerId}": ${cand.model} counts ${factor}× ` +
+            `(${describePeak(cand.provider.peak)}${until ? `, until ${until}` : ''}). ` +
+            `Run off-peak, pick another provider, or pass --allow-peak.`,
+          extra: until ? { peak_until: until } : {},
+        };
+      }
+    }
+    if (cand.provider.quota && !flags['allow-quota']) {
+      const quota = await fetchQuota(cand.providerId, cand.provider, envFileValues, workerStateDir);
+      if (quota?.error) {
+        process.stderr.write(
+          `fleet: quota check on "${cand.providerId}" failed (${quota.error}); continuing.\n`,
+        );
+      } else {
+        const hit = quotaBlockers(cand.provider, quota);
+        if (hit.length) {
+          const resetAt = hit
+            .map((w) => w.resetAt)
+            .filter(Boolean)
+            .sort()[0];
+          return {
+            error_class: 'quota_blocked',
+            error:
+              `quota exhausted on "${cand.providerId}": ` +
+              hit
+                .map(
+                  (w) =>
+                    `${w.window} ${w.percent == null ? '?' : w.percent}% (${w.status})` +
+                    `${w.resetAt ? `, resets ${w.resetAt}` : ''}`,
+                )
+                .join('; ') +
+              `. Wait for the reset, pick another provider, or pass --allow-quota.`,
+            extra: resetAt ? { reset_at: resetAt } : {},
+          };
+        }
+      }
+    }
+    return null;
+  };
+
+  let gateBlock = await gateReason(current);
+  if (gateBlock) {
+    const fbId = current.provider.fallback;
+    const fb = fbId ? config.providers[fbId] : null;
+    const fbModel = fb ? resolveModel(fb, fallbackTier) : null;
+    let fbCand = null;
+    if (fb && fbId !== current.providerId && runnerOf(fb) === runner && fbModel) {
+      try {
+        fbCand = { providerId: fbId, provider: fb, model: fbModel, key: keyFor(fbId, fb), runner };
+      } catch {
+        fbCand = null; // no key for the fallback — treat it as unavailable
+      }
+    }
+    if (fbCand && !(await gateReason(fbCand))) {
+      process.stderr.write(
+        `fleet: ${gateBlock.error_class} on "${current.providerId}" → falling back to ` +
+          `"${fbCand.providerId}" (${fbCand.model}).\n`,
+      );
+      current = fbCand;
+      gateBlock = null;
+    }
+  }
+  if (gateBlock) {
     emitRun(
       {
         ok: false,
@@ -1417,62 +1491,13 @@ async function cmdRun(argv) {
         result: null,
         attempts: [],
         progress_file: progressFile,
-        error,
-        error_class,
-        ...extra,
+        error: gateBlock.error,
+        error_class: gateBlock.error_class,
+        ...gateBlock.extra,
       },
       format,
     );
     process.exit(4);
-  };
-
-  if (current.provider.peak?.refuse && isPeak(current.provider.peak) && !flags['allow-peak']) {
-    const factor = quotaMultiplier(current.provider, current.model);
-    if (factor > 1) {
-      const until = peakWindowEnd(current.provider.peak);
-      gateFail(
-        'peak_blocked',
-        `peak hours on "${current.providerId}": ${current.model} counts ${factor}× ` +
-          `(${describePeak(current.provider.peak)}${until ? `, until ${until}` : ''}). ` +
-          `Run off-peak, pick another provider, or pass --allow-peak.`,
-        until ? { peak_until: until } : {},
-      );
-    }
-  }
-
-  if (current.provider.quota && !flags['allow-quota']) {
-    const quota = await fetchQuota(
-      current.providerId,
-      current.provider,
-      envFileValues,
-      workerStateDir,
-    );
-    if (quota?.error) {
-      process.stderr.write(
-        `fleet: quota check on "${current.providerId}" failed (${quota.error}); continuing.\n`,
-      );
-    } else {
-      const hit = quotaBlockers(current.provider, quota);
-      if (hit.length) {
-        const resetAt = hit
-          .map((w) => w.resetAt)
-          .filter(Boolean)
-          .sort()[0];
-        gateFail(
-          'quota_blocked',
-          `quota exhausted on "${current.providerId}": ` +
-            hit
-              .map(
-                (w) =>
-                  `${w.window} ${w.percent == null ? '?' : w.percent}% (${w.status})` +
-                  `${w.resetAt ? `, resets ${w.resetAt}` : ''}`,
-              )
-              .join('; ') +
-            `. Wait for the reset, pick another provider, or pass --allow-quota.`,
-          resetAt ? { reset_at: resetAt } : {},
-        );
-      }
-    }
   }
 
   let releaseSlot = await acquireProviderSlot(
@@ -1958,7 +1983,8 @@ Peak hours:
   cost_usd by it, applies peak.maxParallel and, with preferFallback, starts on
   provider.fallback instead. doctor shows whether peak is active now.
   refuse: true turns the warning into a refusal (error_class peak_blocked, exit 4) unless
-  --allow-peak is passed. Providers do not publish their windows, so they stay config —
+  --allow-peak is passed. A blocked run first tries provider.fallback (same runner) and only
+  fails when that one is blocked too. Providers do not publish their windows, so they stay config —
   but a plan can suspend them for a stretch of days, which exceptions covers:
     "exceptions": [{ "from": "2026-09-25", "to": "2026-10-07", "treatAs": "offPeak",
                      "note": "promo" }]
@@ -1972,7 +1998,8 @@ Live quota:
   adapter (zai, opencode-go) and its default url; apiKeyEnv defaults to the provider's own
   key; refuseAt is a percentage (default 100 = only when a window reports exhausted);
   cacheSec (default 60) keeps a fan-out from hammering the endpoint. A failing check is
-  reported on stderr and never blocks. Override a block with --allow-quota.
+  reported on stderr and never blocks. A blocked run first tries provider.fallback (same
+  runner). Override a block with --allow-quota.
 
 Runners:
   Each provider runs on a runner: "claude" (default; headless claude -p against an
