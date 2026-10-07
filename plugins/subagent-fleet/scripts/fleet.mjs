@@ -525,9 +525,45 @@ async function cmdDoctor(argv) {
   }
 }
 
+const cliPathCache = new Map();
+// Windows: npm installs CLIs as `<name>.cmd` shims. Node's spawn() cannot run a
+// .cmd without shell:true, and shell:true would hand the worker prompt to cmd.exe
+// unquoted. Resolve the real executable instead: `<name>.exe` on PATH, else the
+// .exe the npm shim calls. Elsewhere the name is used as-is.
+function resolveCli(name) {
+  if (process.platform !== 'win32') return name;
+  if (cliPathCache.has(name)) return cliPathCache.get(name);
+  let resolved = name;
+  const dirs = (process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  for (const dir of dirs) {
+    const exe = path.join(dir, `${name}.exe`);
+    if (fs.existsSync(exe)) {
+      resolved = exe;
+      break;
+    }
+    const cmd = path.join(dir, `${name}.cmd`);
+    if (!fs.existsSync(cmd)) continue;
+    let text = '';
+    try {
+      text = fs.readFileSync(cmd, 'utf8');
+    } catch {
+      continue;
+    }
+    const m = text.match(/"%dp0%\\([^"]+\.exe)"/i);
+    if (!m) continue;
+    const target = path.join(dir, m[1]);
+    if (fs.existsSync(target)) {
+      resolved = target;
+      break;
+    }
+  }
+  cliPathCache.set(name, resolved);
+  return resolved;
+}
+
 function getCliVersion(cmd) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(resolveCli(cmd), ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     child.stdout.on('data', (d) => (out += d));
@@ -558,7 +594,7 @@ function pingProvider(provider, key, model, stateDir) {
       '--allowedTools',
       '',
     ];
-    const child = spawn('claude', args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(resolveCli('claude'), args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     let done = false;
@@ -605,7 +641,7 @@ function pingOpencode(model, stateDir) {
   return new Promise((resolve) => {
     const args = ['run', '--model', model, '--format', 'json', '--pure', 'Reply with exactly: OK'];
     const env = applyWorkerStateDir({ ...process.env }, stateDir, 'opencode');
-    const child = spawn('opencode', args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(resolveCli('opencode'), args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     let err = '';
     let done = false;
@@ -1873,7 +1909,7 @@ function runWorker(cmd, args, env, cwd, timeoutSec) {
     try {
       // detached: give the worker its own process group so we can kill the whole
       // tree (worker + anything it spawned, e.g. a Bash tool) on timeout.
-      child = spawn(cmd, args, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      child = spawn(resolveCli(cmd), args, { env, cwd, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     } catch (e) {
       resolve({ spawnError: e.message, stdout: '', stderr: '', code: 1 });
       return;
